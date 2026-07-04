@@ -21,9 +21,9 @@ keywords baked into the grammar. If it can be a message send, it is one.
 | **Type system** | None — dynamically and uniformly typed, every value is an object |
 | **Syntax** | Smalltalk/Self family |
 | **Control flow** | Ordinary messages to booleans and blocks — no `if`/`while` keywords |
-| **Error handling** | Deferred past v0.1 |
+| **Error handling** | Message-based exception handling — `on:do:` on blocks; spec section pending |
 | **Concurrency** | None built-in |
-| **Reflection** | Deferred past v0.1 (Self's mirror-based reflection is out of scope for now) |
+| **Reflection** | Mirror-based — spec section pending |
 | **Targets** | Reference interpreter only — implementation platform not yet decided, see [implementation-platform.md](implementation-platform.md) |
 
 ---
@@ -241,18 +241,5 @@ The minimum needed to bootstrap:
 | Strings | Concatenation (`,`), `printString` |
 | Blocks | `value`, `value:`, `value:value:`, …, `whileTrue:` |
 
-Exact numeric coercion rules (int/float mixing) are deferred.
-
----
-
-## Deferred to Later Versions
-
-| Feature | Notes |
-|---|---|
-| Non-local block return | `^` inside a block returns from the *enclosing method*, not just the block — needs activation-record semantics not yet designed |
-| Exception handling | No mechanism defined yet |
-| Modules / namespaces | Only the lobby exists for now |
-| Mirror-based reflection | A defining feature of real Self; out of scope until the core object model is solid |
-| Cascades (`;`) | Not included — revisit once real programs show a need |
-| Numeric tower | Bignums, int/float coercion rules |
-| Concurrency | Out of scope |
+Integer arithmetic promotes transparently to bignums on overflow. Mixed
+int/float expressions return float.

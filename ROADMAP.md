@@ -100,7 +100,8 @@ Spec: [§ Objects and Slots](lang-spec.md#1-objects-and-slots).
 ### Substage 1.8 — Evaluator: binary and keyword messages
 
 Binary methods and keyword methods on user-defined objects; built-in numeric
-arithmetic and comparison operators.
+arithmetic (`+ - * /`) and comparison (`< > <= >= = ~=`); int/float coercion
+rules (what happens when integer and float operands are mixed).
 
 Spec: [§ Messages](lang-spec.md#2-messages),
 [§ Built-in Objects](lang-spec.md#8-built-in-objects).
@@ -140,6 +141,48 @@ Running `.ego` files from the CLI, `line:column:` error diagnostics with
 source location tracking through lexer, parser, and evaluator.
 
 Spec: [cli.md](cli.md).
+
+### Substage 1.14 — Evaluator: cascades
+
+`;` cascade syntax — sends a sequence of messages to the same receiver
+without repeating it.
+
+```
+collection add: 1; add: 2; add: 3.
+```
+
+Spec: [lang-spec.md](lang-spec.md) — section to be written.
+
+### Substage 1.15 — Evaluator: exception handling
+
+Message-based exception handling consistent with Self: `[...] on: E do: [:e | ...]`
+as a keyword message sent to a block. Exception types are prototype objects.
+Handlers are blocks receiving the exception object, which can be resumed,
+retried, or re-raised via messages. Built-in signals: message not understood,
+dead non-local return, arithmetic errors.
+
+Spec: [lang-spec.md](lang-spec.md) — section to be written before this
+substage begins.
+
+### Substage 1.16 — Evaluator: mirror-based reflection
+
+Mirror objects for introspective access to an object's slots — read slot
+names and values, add or remove slots, without building these operations
+into the core message dispatch. Mirrors keep the base object model clean.
+
+Spec: [lang-spec.md](lang-spec.md) — section to be written before this
+substage begins.
+
+### Substage 1.17 — Evaluator: bignums
+
+Arbitrary-precision integers. Small integers (fitting a machine word) are
+handled from substage 1.5; this substage adds transparent promotion to
+bignums when arithmetic overflows, so integer arithmetic is exact without
+bounds. Use a library (e.g. `num-bigint` in Rust) rather than implementing
+arithmetic from scratch.
+
+Spec: [§ Built-in Objects](lang-spec.md#8-built-in-objects) — extend the
+Numbers row.
 
 ### Testing philosophy
 
@@ -276,11 +319,6 @@ Features deferred until the core is working:
 
 | Feature | Notes |
 |---|---|
-| Non-local block return | Needs activation-record semantics — design work before implementation |
-| Exception handling | No mechanism designed yet |
-| Modules / namespaces | Only the lobby exists for now |
-| Mirror-based reflection | A defining feature of real Self; substantial design effort on its own |
-| Numeric tower | Bignums, int/float coercion rules |
 | GC refinement | Generational or copying collector once the simple mark-and-sweep baseline exists (Stage 3) |
 | Concurrency | Out of scope until the sequential core is solid |
 | Zig VM optimizations | JIT, inline caching, hidden classes — post-parity work |
