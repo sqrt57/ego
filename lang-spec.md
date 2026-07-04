@@ -21,9 +21,9 @@ keywords baked into the grammar. If it can be a message send, it is one.
 | **Type system** | None — dynamically and uniformly typed, every value is an object |
 | **Syntax** | Smalltalk/Self family |
 | **Control flow** | Ordinary messages to booleans and blocks — no `if`/`while` keywords |
-| **Error handling** | Message-based exception handling — `on:do:` on blocks; spec section pending |
+| **Error handling** | Message-based exception handling — `on:do:` on blocks (§10) |
 | **Concurrency** | None built-in |
-| **Reflection** | Mirror-based — spec section pending |
+| **Reflection** | Mirror-based (§11) |
 | **Targets** | Reference interpreter only — implementation platform not yet decided, see [implementation-platform.md](implementation-platform.md) |
 
 ---
@@ -243,3 +243,142 @@ The minimum needed to bootstrap:
 
 Integer arithmetic promotes transparently to bignums on overflow. Mixed
 int/float expressions return float.
+
+---
+
+## 9. Cascades
+
+The `;` operator sends a sequence of messages to the same receiver without
+repeating it:
+
+```
+collection add: 1; add: 2; add: 3.
+```
+
+The receiver is the value of the expression immediately before the first `;`,
+evaluated exactly once. Each subsequent `;`-separated message is sent to that
+same receiver. The result of the whole cascade is the result of the *last*
+message in the chain.
+
+All three message kinds may appear in a cascade:
+
+```
+stream nextPutAll: 'hello'; nl; close.
+```
+
+A cascade is not a statement separator — it binds more tightly than `.`. The
+`.` that terminates the statement ends the entire cascade:
+
+```
+a foo; bar.   "cascade: foo and bar sent to a; result discarded"
+b baz.        "separate statement"
+```
+
+---
+
+## 10. Exception Handling
+
+Exception handling is entirely message-based. There is no `try`/`catch`
+syntax — a block is the protected region, and `on:do:` is an ordinary keyword
+message sent to it.
+
+### Protecting a region
+
+```
+[risky code] on: ExceptionType do: [:e | handler].
+```
+
+The receiver block is evaluated. If an exception whose type is `ExceptionType`
+(or a subtype, via its parent chain) is signalled during that evaluation, the
+handler block is invoked with the exception object as its argument. The result
+of the `on:do:` expression is the result of whichever block completes normally.
+
+### Signalling an exception
+
+```
+anException signal.
+anException signal: 'description text'.
+```
+
+`signal` is an ordinary method on exception prototype objects. It unwinds the
+stack searching for a matching `on:do:` handler.
+
+### Handler operations
+
+Inside the handler block, the exception object `e` understands:
+
+| Message | Effect |
+|---|---|
+| `e return` | Exits the `on:do:` expression, returning `nil` |
+| `e return: val` | Exits the `on:do:` expression, returning `val` |
+| `e retry` | Re-executes the protected block from the beginning |
+| `e resume` | Resumes execution immediately after the `signal` send, returning `nil` to the signaller |
+| `e resume: val` | Resumes after `signal`, returning `val` to the signaller |
+| `e outer` | Passes the exception to the next enclosing handler for the same type |
+| `e signal` | Re-raises the exception from the handler's location |
+| `e messageText` | Returns the exception's description string |
+
+If the handler block exits normally (no explicit operation), it is equivalent
+to `e return:` with the block's value.
+
+### Exception type hierarchy
+
+Exception types are ordinary prototype objects. Subtyping is expressed via
+parent slots — an exception is an instance of any type reachable through its
+parent chain. `on:do:` catches the named type and all of its subtypes.
+
+Built-in exception types:
+
+| Type | Signalled when |
+|---|---|
+| `error` | Base type; all built-in exceptions inherit from it |
+| `messageNotUnderstood` | No method found for a message send |
+| `badBlockActivation` | A non-local `^` return targets an already-returned method activation |
+| `zeroDivide` | Division or modulo by zero |
+| `primitiveError` | A built-in operation fails for any other reason |
+
+User-defined exception types are created by cloning `error` (or any subtype)
+and adding a parent slot pointing to the desired supertype.
+
+---
+
+## 11. Mirrors
+
+Reflection is **separated from the base object model**. Ordinary objects have
+no introspective methods — there is no `respondsTo:`, `perform:`, or `class`
+on base objects. Reflection is accessed exclusively through a mirror object.
+
+### Obtaining a mirror
+
+```
+| m |
+m: reflect: anObject.
+```
+
+`reflect:` is a method on the lobby. It returns a mirror wrapping `anObject`.
+
+### Mirror API
+
+| Message | Returns |
+|---|---|
+| `m slotNames` | An array of slot-name strings for all slots in the reflectee |
+| `m at: name` | The value of the slot named `name`; signals `error` if absent |
+| `m at: name Put: val` | Assigns the slot named `name` to `val`; signals `error` if absent |
+| `m addSlot: name = val` | Adds a new data slot named `name` with value `val` |
+| `m removeSlot: name` | Removes the slot named `name`; signals `error` if absent |
+
+`name` is always a string. Slot names include all slot kinds — data, var,
+method, and parent slots are all visible.
+
+### Design principles
+
+1. **Encapsulation** — reflection requires possession of the mirror object.
+   Code that does not receive a mirror cannot introspect the reflectee.
+
+2. **Stratification** — the mirror's slot namespace is entirely separate from
+   the reflectee's. A reflectee slot named `slotNames` does not collide with
+   the mirror method `slotNames`.
+
+3. **No reflective methods on base objects** — `respondsTo:`, `perform:`, and
+   equivalents are not defined on any base object. Adding them to a user object
+   is not prohibited, but the standard library does not provide them.

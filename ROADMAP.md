@@ -13,10 +13,9 @@
   - Document what ego adopts, adapts, or intentionally diverges from
   - Should precede the language spec completion work
 - **Complete language spec** — additions to `lang-spec.md`
-  - § Cascades — semantics of `;`
-  - § Exception Handling — `on:do:` protocol, exception prototype hierarchy,
-    resume/retry/re-raise
-  - § Mirrors — mirror API for slot introspection and mutation
+  - § Cascades — ✓ [lang-spec.md §9](lang-spec.md#9-cascades)
+  - § Exception Handling — ✓ [lang-spec.md §10](lang-spec.md#10-exception-handling)
+  - § Mirrors — ✓ [lang-spec.md §11](lang-spec.md#11-mirrors)
   - Each section must exist before its corresponding Stage 1 substage begins
 - **Ecosystem spec** — `ecosystem.md`
   - Collections: array, dictionary
