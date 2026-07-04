@@ -17,12 +17,12 @@
   - § Exception Handling — ✓ [lang-spec.md §10](lang-spec.md#10-exception-handling)
   - § Mirrors — ✓ [lang-spec.md §11](lang-spec.md#11-mirrors)
   - Each section must exist before its corresponding Stage 1 substage begins
-- **Ecosystem spec** — `ecosystem.md`
-  - Collections: array, dictionary
-  - I/O: console read/write, file read/write
+- **Standard library spec** — ✓ [stdlib.md](stdlib.md)
+  - Collections: array, orderedCollection, dictionary
+  - I/O: console (stdin/stdout/stderr), file streams
   - String utilities beyond core spec
-  - Basic math
-  - Need not be exhaustive — sufficient to guide Stage 1 parallel ecosystem work
+  - Numeric utilities (integer, float, math object)
+  - Nil-testing convention (`isNil`/`notNil` on built-in objects)
 - **Image workflow design** — `image.md`
   - An image is a snapshot of the live object graph saved to disk and restored
     later — the Self/Smalltalk model for persisting a running world
