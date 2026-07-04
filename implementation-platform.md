@@ -68,4 +68,38 @@ up.
 
 ## Decision
 
-TBD.
+**Multi-stage split architecture.** Primary motivation is learning; each stage
+produces a working deliverable that is retained as later stages are added.
+
+| Stage | Language | What it builds |
+|---|---|---|
+| 1 | Rust | Tree-walking interpreter + REPL |
+| 2 | Rust | Bytecode compiler + bytecode VM; defines the bytecode file format |
+| 3 | Zig | Advanced VM consuming the same bytecode format; custom GC |
+| 4 | Ego | Self-hosted compiler targeting the bytecode format |
+
+**Rationale:**
+
+- **Rust for stages 1–2** sidesteps the cyclic-object-graph problem via an
+  arena-based object model from the start: objects live in a flat array,
+  slots hold integer indices rather than pointers, and a simple mark-and-sweep
+  collector runs over the arena. This applies to both the tree-walker and the
+  bytecode VM.
+- **Zig for stage 3** is the learning artifact for memory management and GC
+  design. The pre-1.0 risk is acceptable for a personal project and mitigated
+  by pinning a specific Zig version; Zig 1.0 is expected before stage 3 begins.
+- **No FFI boundary between Rust and Zig.** The interface between stages is the
+  bytecode file format — a stable, version-tagged binary format designed at
+  stage 2. This makes the seam an I/O contract rather than an FFI boundary and
+  keeps each stage independently testable.
+- **All stages remain available** after later stages ship. The tree-walker is
+  retained as a reference implementation and test oracle; the Rust bytecode VM
+  is retained as a fallback and debugging tool. Running identical programs
+  through multiple runtimes is the primary cross-stage correctness check.
+
+Implementation design per stage:
+
+- Stage 1: `rs-treewalk-impl.md`
+- Stage 2: `rs-vm-impl.md`; bytecode format: `bytecode.md`
+- Stage 3: `zig-vm-impl.md`
+- Stage 4: `self-hosted-impl.md`
