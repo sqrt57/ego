@@ -100,10 +100,21 @@ A program is a sequence of statements evaluated against the lobby, in order.
 
 ### Statements
 
-    Stmt = "^" Expr | Expr .
+    Stmt = "^" CascadeExpr | CascadeExpr .
 
-`^` returns the value of `Expr` from the enclosing method or block body. At
+`^` returns the value of `CascadeExpr` from the enclosing method or block body. At
 top level (outside any method or block) its behavior is unspecified.
+
+### Cascades
+
+    CascadeExpr = Expr [ ";" CascadeMsg { ";" CascadeMsg } ] .
+    CascadeMsg  = unary_selector
+                | binary_selector UnaryExpr
+                | ( keyword_part | cap_keyword_part ) BinaryExpr
+                  { ( keyword_part | cap_keyword_part ) BinaryExpr }
+                .
+
+See [lang-spec.md §9](lang-spec.md#9-cascades) for semantics.
 
 ### Expressions
 

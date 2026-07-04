@@ -80,9 +80,10 @@ An optional annotation `{} = 'text'.` may appear at the start of the slot
 list to attach metadata (e.g. a category name for IDE tooling).
 
 An object is created either as a literal (above) or by **cloning** an
-existing object (`anObject copy`), which duplicates its slots. Cloning is
-the only way to get a "new instance" — there is no `new` keyword and no
-class/instance distinction.
+existing object (`anObject copy`), which produces a shallow copy: each slot
+is reproduced with its original name, kind, and value, but slot values
+themselves are not recursively cloned. Cloning is the only way to get a
+"new instance" — there is no `new` keyword and no class/instance distinction.
 
 ---
 
@@ -196,7 +197,8 @@ collide.
 Top-level program text is a sequence of expressions separated by `.`,
 each evaluated with an implicit receiver called the **lobby** — the root
 object that provides access to built-ins (`true`, `false`, `nil`, number
-and string prototypes, etc.) and top-level bindings. There is no other
+and string prototypes, exception prototypes, etc.), the `reflect:` method
+for obtaining mirrors (§11), and top-level bindings. There is no other
 form of global state.
 
 A REPL evaluates each top-level statement against the lobby as it is read
@@ -236,10 +238,15 @@ The minimum needed to bootstrap:
 | Object | Provides |
 |---|---|
 | `true`, `false` | `ifTrue:ifFalse:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, `not` |
-| `nil` | The absence of a value |
-| Numbers | Arithmetic (`+ - * /`), comparison (`< > <= >= = ~=`) |
+| `nil` | The absence of a value; `isNil` → `true`, `notNil` → `false` |
+| Numbers | Arithmetic (`+ - * /`), comparison (`< > <= >= = ~=`), `printString` |
 | Strings | Concatenation (`,`), `printString` |
 | Blocks | `value`, `value:`, `value:value:`, …, `whileTrue:` |
+| Exception prototypes | `error` (base type), `messageNotUnderstood`, `badBlockActivation`, `zeroDivide`, `primitiveError`; all respond to `signal` and `signal:` (§10) |
+
+All built-in objects respond to `copy` (shallow clone, as described in §1)
+and `printString` (returns a string representation). All built-in objects
+except `nil` respond to `isNil` → `false` and `notNil` → `true`.
 
 Integer arithmetic promotes transparently to bignums on overflow. Mixed
 int/float expressions return float.

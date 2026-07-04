@@ -43,7 +43,7 @@ flat array, slots hold integer indices) with a simple mark-and-sweep GC. This
 model is shared with Stage 2, reducing rework. This interpreter is retained
 indefinitely as a reference implementation and test oracle.
 
-Design: `rs-treewalk-impl.md`
+Design: ✓ `rs-treewalk-impl.md`
 
 ### Substage 1.1 — Lexer
 
