@@ -1,11 +1,38 @@
 # ego Roadmap
 
-## Pre-Implementation — ✓ Complete
+## Pre-Implementation
 
 - **Formal grammar** — ✓ [lang-grammar.md](lang-grammar.md)
 - **Command line** — ✓ [cli.md](cli.md); REPL, script, and inline-eval modes
 - **Implementation platform** — ✓ [implementation-platform.md](implementation-platform.md);
   multi-stage split: Rust tree-walker → Rust bytecode VM → Zig VM → self-hosted compiler
+- **Self documentation review** — `self-notes.md`
+  - Study Self 4.x language reference and papers
+  - Extract decisions relevant to ego: exception handling protocol, mirror API,
+    cascade semantics, block activation, numeric tower behaviour
+  - Document what ego adopts, adapts, or intentionally diverges from
+  - Should precede the language spec completion work
+- **Complete language spec** — additions to `lang-spec.md`
+  - § Cascades — semantics of `;`
+  - § Exception Handling — `on:do:` protocol, exception prototype hierarchy,
+    resume/retry/re-raise
+  - § Mirrors — mirror API for slot introspection and mutation
+  - Each section must exist before its corresponding Stage 1 substage begins
+- **Ecosystem spec** — `ecosystem.md`
+  - Collections: array, dictionary
+  - I/O: console read/write, file read/write
+  - String utilities beyond core spec
+  - Basic math
+  - Need not be exhaustive — sufficient to guide Stage 1 parallel ecosystem work
+- **Image workflow design** — `image.md`
+  - An image is a snapshot of the live object graph saved to disk and restored
+    later — the Self/Smalltalk model for persisting a running world
+  - Format: heap dump vs. structured serialisation
+  - Bootstrap: how the initial image is created (hardcoded builtins, compiled
+    from Ego source, or a combination)
+  - CLI: commands for saving and loading images
+  - Image formats may be incompatible across stages — each VM has a different
+    heap layout; the cross-stage contract is the bytecode format, not the image
 
 ---
 
