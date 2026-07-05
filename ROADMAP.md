@@ -23,15 +23,9 @@
   - String utilities beyond core spec
   - Numeric utilities (integer, float, math object)
   - Nil-testing convention (`isNil`/`notNil` on built-in objects)
-- **Image workflow design** — `image.md`
-  - An image is a snapshot of the live object graph saved to disk and restored
-    later — the Self/Smalltalk model for persisting a running world
-  - Format: heap dump vs. structured serialisation
-  - Bootstrap: how the initial image is created (hardcoded builtins, compiled
-    from Ego source, or a combination)
-  - CLI: commands for saving and loading images
-  - Image formats may be incompatible across stages — each VM has a different
-    heap layout; the cross-stage contract is the bytecode format, not the image
+- **Image workflow design** — deferred to Stage 2; not needed for Stage 1
+  (Stage 1 has no image: every run parses source, evaluates, and discards the
+  object graph). Design doc `image.md` to be written before Stage 2 begins.
 
 ---
 
