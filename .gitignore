@@ -1,2 +1,4 @@
 papers/
 .claude/
+target/
+*.egoc
