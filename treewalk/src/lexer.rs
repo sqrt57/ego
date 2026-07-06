@@ -57,9 +57,6 @@ struct Lexer {
     line: u32,
     col: u32,
     file: Rc<String>,
-    /// True when the previous token could end an expression (literal, identifier,
-    /// `)`, `]`).  Used to distinguish binary `-` from a negative literal start.
-    after_expr: bool,
 }
 
 impl Lexer {
@@ -70,7 +67,6 @@ impl Lexer {
             line: 1,
             col: 1,
             file,
-            after_expr: false,
         }
     }
 
@@ -316,68 +312,49 @@ impl Lexer {
             // String literal
             if ch == '\'' {
                 self.advance();
-                let tok = self.lex_string(span)?;
-                self.after_expr = true;
-                return Ok(Some(tok));
+                return Ok(Some(self.lex_string(span)?));
             }
 
             // Positive integer or float
             if ch.is_ascii_digit() {
-                let tok = self.lex_number(false, span)?;
-                self.after_expr = true;
-                return Ok(Some(tok));
+                return Ok(Some(self.lex_number(false, span)?));
             }
 
-            // Negative integer or float: `-` only starts a literal when:
-            //   (a) we are not immediately after an expression, AND
-            //   (b) the next character is a decimal digit.
-            if ch == '-' && !self.after_expr {
-                if matches!(self.peek_at(1), Some('0'..='9')) {
-                    let tok = self.lex_number(true, span)?;
-                    self.after_expr = true;
-                    return Ok(Some(tok));
-                }
-                // Otherwise fall through to binary selector handling.
+            // Negative integer or float: `-` immediately followed by a decimal digit.
+            if ch == '-' && matches!(self.peek_at(1), Some('0'..='9')) {
+                return Ok(Some(self.lex_number(true, span)?));
             }
 
             // Lowercase or `_`: identifier, keyword part, or pseudo-variable
             if ch.is_ascii_lowercase() || ch == '_' {
-                let tok = self.lex_ident(span);
-                self.after_expr =
-                    matches!(tok.token, Token::Ident(_) | Token::Self_ | Token::Resend);
-                return Ok(Some(tok));
+                return Ok(Some(self.lex_ident(span)));
             }
 
             // Uppercase: cap keyword part (must end with `:`)
             if ch.is_ascii_uppercase() {
-                let tok = self.lex_cap_keyword(span)?;
-                self.after_expr = false;
-                return Ok(Some(tok));
+                return Ok(Some(self.lex_cap_keyword(span)?));
             }
 
             // Binary selector (greedy sequence of binary chars)
             if is_binary_char(ch) {
-                let tok = self.lex_binary(span);
-                self.after_expr = false;
-                return Ok(Some(tok));
+                return Ok(Some(self.lex_binary(span)));
             }
 
             // Single-character punctuation
             self.advance();
-            let (token, ends_expr) = match ch {
-                '^' => (Token::Caret, false),
-                '.' => (Token::Dot, false),
-                ';' => (Token::Semi, false),
-                ':' => (Token::Colon, false),
-                '(' => (Token::LParen, false),
-                ')' => (Token::RParen, true),
-                '[' => (Token::LBrack, false),
-                ']' => (Token::RBrack, true),
-                '{' => (Token::LBrace, false),
-                '}' => (Token::RBrace, false),
+            let token = match ch {
+                '^' => Token::Caret,
+                '.' => Token::Dot,
+                ';' => Token::Semi,
+                ':' => Token::Colon,
+                '(' => Token::LParen,
+                ')' => Token::RParen,
+                '[' => Token::LBrack,
+                ']' => Token::RBrack,
+                '{' => Token::LBrace,
+                '}' => Token::RBrace,
                 _ => return Err(self.err(span, format!("unexpected character: {ch:?}"))),
             };
-            self.after_expr = ends_expr;
             return Ok(Some(TokenWithSpan { token, span }));
         }
     }

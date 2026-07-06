@@ -281,69 +281,23 @@ fn whitespace_is_skipped() {
     assert_eq!(tokens("42\r\n43"), vec![Token::Integer(42), Token::Integer(43)]);
 }
 
-// ── Negative literal vs binary `-` (after_expr state) ─────────────────────
+// ── Negative literal vs standalone binary `-` ──────────────────────────────
 
-#[test]
-fn minus_after_ident_is_binary() {
-    // `foo -3` → ident, binary `-`, integer `3`
-    assert_eq!(
-        tokens("foo -3"),
-        vec![Token::Ident("foo".into()), Token::Binary("-".into()), Token::Integer(3)]
-    );
+#[rstest]
+#[case("foo -3",  vec![Token::Ident("foo".into()), Token::Integer(-3)])]
+#[case("foo: -3", vec![Token::Keyword("foo:".into()), Token::Integer(-3)])]
+#[case("(42) -3", vec![Token::LParen, Token::Integer(42), Token::RParen, Token::Integer(-3)])]
+#[case("[42] -1", vec![Token::LBrack, Token::Integer(42), Token::RBrack, Token::Integer(-1)])]
+#[case("< -3",   vec![Token::Binary("<".into()), Token::Integer(-3)])]
+fn minus_touching_digit_is_literal(#[case] src: &str, #[case] expected: Vec<Token>) {
+    assert_eq!(tokens(src), expected);
 }
 
 #[test]
-fn minus_after_integer_is_binary() {
+fn minus_not_touching_digit_is_binary_selector() {
     assert_eq!(
         tokens("3 - 4"),
         vec![Token::Integer(3), Token::Binary("-".into()), Token::Integer(4)]
-    );
-}
-
-#[test]
-fn minus_after_keyword_is_literal() {
-    // After a keyword part `after_expr` is false → `-3` is a negative literal
-    assert_eq!(
-        tokens("foo: -3"),
-        vec![Token::Keyword("foo:".into()), Token::Integer(-3)]
-    );
-}
-
-#[test]
-fn minus_after_rparen_is_binary() {
-    assert_eq!(
-        tokens("(42) -3"),
-        vec![
-            Token::LParen,
-            Token::Integer(42),
-            Token::RParen,
-            Token::Binary("-".into()),
-            Token::Integer(3)
-        ]
-    );
-}
-
-#[test]
-fn minus_after_rbracket_is_binary() {
-    assert_eq!(
-        tokens("[42] -1"),
-        vec![
-            Token::LBrack,
-            Token::Integer(42),
-            Token::RBrack,
-            Token::Binary("-".into()),
-            Token::Integer(1)
-        ]
-    );
-}
-
-#[test]
-fn lt_space_minus_digit_is_binary_then_literal() {
-    // `< -3`: space separates `<` and `-`, so `<` is its own binary selector
-    // and `-3` is a negative literal (after_expr = false after a binary selector)
-    assert_eq!(
-        tokens("< -3"),
-        vec![Token::Binary("<".into()), Token::Integer(-3)]
     );
 }
 
