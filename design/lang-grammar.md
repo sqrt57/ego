@@ -165,6 +165,20 @@ arguments, not two sends.
     ParentSlotDecl = identifier "*" "=" Expr .
     MethodSlotDecl = MethodSelector "=" "(" [ Code ] ")" .
 
+The `"("` in `MethodSlotDecl` is the method body delimiter, not the start of
+a parenthesised expression. Consequently `x = (…)` inside a slot list is
+**always** parsed as a unary method slot, never as a data slot whose value
+happens to be wrapped in parens. Data slots with complex expressions must
+omit the outer parens: `x = a + b`, not `x = (a + b)`.
+
+An object literal `(| … |)` is unambiguous as a data slot value because the
+`(` is immediately followed by `|`, which signals an object literal primary
+rather than a method body.
+
+In `ParentSlotDecl`, the `"*"` and `"="` must be separate tokens (i.e.
+separated by whitespace). Writing `p*=` produces a single `Binary("*=")` token
+and is a syntax error; write `p* = val` instead.
+
     MethodSelector = identifier                                                (* unary *)
                    | binary_selector identifier                                (* binary, one param *)
                    | ( keyword_part | cap_keyword_part ) identifier

@@ -151,6 +151,84 @@ targets this activation.
 
 ---
 
+## Parser
+
+Recursive-descent, hand-written. Public entry point:
+
+```rust
+pub fn parse(tokens: &[TokenWithSpan], file: Rc<String>) -> Result<Program, EgoError>
+```
+
+`Program` is `Vec<Stmt>`. A `Parser` struct holds a slice reference to the
+token stream and a position index; it never backtracks.
+
+### AST types (`ast.rs`)
+
+| Type | Description |
+|---|---|
+| `Stmt` / `StmtKind` | `Return(Box<Expr>)` or `Expr(Box<Expr>)` |
+| `Expr` / `ExprKind` | All expression forms; each carries a `SourceSpan` |
+| `CascadeMsg` | Unary / Binary / Keyword continuation message |
+| `BlockLit` | Params, locals (`Vec<BlockLocal>`), body |
+| `BlockLocal` | `name`, `LocalKind` (Data / Var), `init: Expr` |
+| `ObjectLit` | Optional annotation, slot list, body |
+| `SlotDecl` / `SlotDeclKind` | Data, Var, Arg, Parent, Method |
+| `MethodSel` | Unary / Binary / Keyword selector + parameter names |
+
+`BlockLocal` carries an initializer `Expr` because the grammar requires one
+(`DataSlotDecl = identifier "=" Expr`). The evaluator executes it at block
+activation time.
+
+### Disambiguation rules
+
+**`(` in primary position**: peek one token ahead.
+- `(` followed by `Binary("|")` → object literal `(| … |)`
+- `(` followed by anything else → parenthesised expression `( Expr )`
+
+**Slot declarations**: the parser looks ahead without consuming to classify
+each slot by the tokens that follow the first token:
+
+| First token(s) | Following tokens | Kind |
+|---|---|---|
+| `Colon` | `Ident` | `ArgSlotDecl` |
+| `Ident` | `Binary("<-")` | `VarSlotDecl` |
+| `Ident` | `Binary("*")` `Binary("=")` | `ParentSlotDecl` |
+| `Ident` | `Binary("=")` `LParen` *(not followed by `\|`)* | `MethodSlotDecl` (unary) |
+| `Ident` | `Binary("=")` *(other)* | `DataSlotDecl` |
+| `Binary(sel)` | `Ident` `Binary("=")` `LParen` | `MethodSlotDecl` (binary) |
+| `Keyword` / `CapKeyword` | … | `MethodSlotDecl` (keyword) |
+
+**`x = (…)` is always a method body.** After `ident "="`, a `(` not
+immediately followed by `|` is the method body delimiter, never the start
+of a parenthesised data-slot value. Data slots with complex expressions must
+omit the outer parens: `x = a + b`, not `x = (a + b)`.
+
+**`(| … |)` as a data slot value** is supported: `x = (| … |)` is a
+`DataSlotDecl` whose value is an `ObjectLit`, because `(` followed by `|`
+is always an object literal primary, not a method body.
+
+**`*` in parent slots** must be separated from `=` by whitespace. Writing
+`p*= val` produces a single `Binary("*=")` token and fails to parse;
+`p* = val` produces `Binary("*")` then `Binary("=")` and parses correctly.
+
+**`|` terminates slot lists.** The closing `|` of a slot section is
+`Binary("|")`. Slot-value expressions containing `|` as a binary operator
+(e.g. `x = a | b`) must be parenthesised; an unparenthesised `|` ends the
+slot list early.
+
+**Block slot syntax.** Block parameters and locals live between `| … |`
+delimiters: `[| :x. y = 0. | body]`. The short form `[:x | body]` is not
+valid in ego's grammar — `[` is not followed by `|`, so there is no slot
+section.
+
+### Keyword accumulation
+
+Both `Keyword` and `CapKeyword` tokens are keyword parts and accumulate into
+a single selector string and argument list. `a at: 1 Put: 2` is one
+`KeywordSend` with selector `"at:Put:"` and two arguments, not two sends.
+
+---
+
 ## Lexical environment (Env)
 
 Bindings for local variables and block parameters are stored in a shared,

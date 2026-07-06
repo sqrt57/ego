@@ -39,7 +39,7 @@ indefinitely as a reference implementation and test oracle.
 
 Design: ✓ `rs-treewalk-impl.md`
 
-### Substage 1.1 — Lexer
+### Substage 1.1 — Lexer ✓
 
 Implement the complete lexer for all tokens defined in
 [lang-grammar.md](lang-grammar.md): identifiers, capitalised keywords,
@@ -51,7 +51,7 @@ Tests: table-driven unit tests, source text in → token stream out.
 
 Spec: [§ Literals](lang-spec.md#4-literals), [lang-grammar.md](lang-grammar.md).
 
-### Substage 1.2 — Parser
+### Substage 1.2 — Parser ✓
 
 Implement the complete parser producing a full AST for all constructs in the
 grammar: object literals, all three message types, cascades, sequences, blocks,
