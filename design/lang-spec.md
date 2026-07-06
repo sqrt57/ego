@@ -24,7 +24,7 @@ keywords baked into the grammar. If it can be a message send, it is one.
 | **Error handling** | Message-based exception handling — `on:do:` on blocks (§10) |
 | **Concurrency** | None built-in |
 | **Reflection** | Mirror-based (§11) |
-| **Targets** | Reference interpreter only — implementation platform not yet decided, see [implementation-platform.md](implementation-platform.md) |
+| **Targets** | Multi-stage: Rust tree-walker → Rust bytecode VM → Zig VM → self-hosted compiler, see [implementation-platform.md](implementation-platform.md) |
 
 ---
 
