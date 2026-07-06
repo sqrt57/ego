@@ -1,14 +1,13 @@
 [package]
 name = "treewalk"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "ego"
 path = "src/main.rs"
 
 [lib]
-path = "src/lib.rs"
 
 [dev-dependencies]
 rstest = "0.23"
