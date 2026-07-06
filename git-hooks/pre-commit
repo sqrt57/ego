@@ -1,0 +1,3 @@
+#!/bin/sh
+REPO_ROOT=$(git rev-parse --show-toplevel)
+pwsh -NonInteractive -File "$REPO_ROOT/git-hooks/pre-commit-checks.ps1"
