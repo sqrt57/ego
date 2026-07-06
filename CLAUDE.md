@@ -1,15 +1,18 @@
-# ego docs
+# ego
 
-Design docs, plans, and Claude Code working notes for the ego project.
-This repo stays on `main` at all times — no feature branches.
+Self-like programming language implementation.
 
-## What goes here
+## Repo layout
 
-- Design decisions and architecture notes
-- Implementation plans
-- Claude Code session notes and in-progress working files
-- Any reference material that isn't source code
+```
+ego/
+  src/          ← Rust source (Stages 1–2; to be added)
+  boot/         ← boot.ego bootstrap source (to be added)
+  papers/       ← academic reference PDFs, not tracked
+  CLAUDE.md     ← this file
+  *.md          ← design docs and implementation plans
+```
 
-## Related
+Source code changes: feature branch. Doc changes coupled to code: same branch. Standalone doc changes: commit directly to `main`.
 
-Source code lives in the sibling `ego` repo: github.com/sqrt57/ego
+Prior implementation archived at `ego-old` (sibling folder, github.com/sqrt57/ego-old).
