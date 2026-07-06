@@ -216,6 +216,14 @@ is always an object literal primary, not a method body.
 (e.g. `x = a | b`) must be parenthesised; an unparenthesised `|` ends the
 slot list early.
 
+Implementation: `Parser` carries a `stop_at_bar: bool` flag. Each slot-value
+call site (`parse_keyword` for Data, Var, Parent values and block locals) sets
+the flag to `true` before parsing and restores it after. `parse_binary` checks
+the flag before consuming a `Binary("|")` token and breaks the loop if set.
+`parse_primary` saves and clears the flag on entry, restoring on exit — so
+inside any parenthesised expression, block, or nested object literal the `|`
+is again available as a binary operator.
+
 **Block slot syntax.** Block parameters and locals live between `| … |`
 delimiters: `[| :x. y = 0. | body]`. The short form `[:x | body]` is not
 valid in ego's grammar — `[` is not followed by `|`, so there is no slot
@@ -450,6 +458,20 @@ struct Activation<'a> {
 
 `Activation` is not heap-allocated, so its `ActivationId` is registered in the
 live-set on entry and removed on exit (including on unwind via `?`).
+
+### Identifier lookup
+
+A bare identifier `foo` in an expression (AST node `ExprKind::Ident`) is
+evaluated as follows:
+
+1. Look up `foo` in the current activation's `env` (local variables and block
+   parameters). If found, return the value immediately.
+2. Otherwise, perform an implicit unary send: `eval_send(self_obj, "foo", &[], …)`.
+
+Step 2 is the correct Self/ego semantic: inside a method body, all bare names
+are unary messages to `self`. At the top level `self_obj` is the lobby, so
+lobby data slots (`nil`, `true`, `false`, the proto objects, etc.) are found by
+the same path without special-casing.
 
 ### Method lookup
 
