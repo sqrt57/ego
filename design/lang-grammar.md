@@ -73,6 +73,12 @@ base prefix is present (e.g. `16rFF`, `8r17`, `2r1010`), the digits before
 `r`/`R` are the base in decimal and the digits after are the value written in
 that base using digits and lowercase/uppercase letters as needed.
 
+Because the lexer is context-free, `-` immediately followed by a decimal digit
+is always tokenised as the start of a negative literal. Consequently `a -3`
+lexes as `[Ident("a"), Integer(-3)]` — two adjacent primaries — which no
+syntactic production accepts. Subtraction must be written `a - 3` (with a
+space after `-`).
+
 ### Float Literals
 
     float_lit = [ "-" ] decimal_digit { decimal_digit } "."
