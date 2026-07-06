@@ -11,14 +11,15 @@ pub fn parse(tokens: &[TokenWithSpan], file: Rc<String>) -> Result<Program, EgoE
 // ── Parser ─────────────────────────────────────────────────────────────────
 
 struct Parser<'t> {
-    tokens: &'t [TokenWithSpan],
-    pos:    usize,
-    file:   Rc<String>,
+    tokens:      &'t [TokenWithSpan],
+    pos:         usize,
+    file:        Rc<String>,
+    stop_at_bar: bool,
 }
 
 impl<'t> Parser<'t> {
     fn new(tokens: &'t [TokenWithSpan], file: Rc<String>) -> Self {
-        Self { tokens, pos: 0, file }
+        Self { tokens, pos: 0, file, stop_at_bar: false }
     }
 
     // ── Primitives ─────────────────────────────────────────────────────────
@@ -203,6 +204,7 @@ impl<'t> Parser<'t> {
     fn parse_binary(&mut self) -> Result<Expr, EgoError> {
         let mut recv = self.parse_unary()?;
         while let Some(Token::Binary(sel)) = self.peek().cloned() {
+            if self.stop_at_bar && sel == "|" { break; }
             let span = self.span();
             self.advance();
             let arg = self.parse_unary()?;
@@ -227,6 +229,17 @@ impl<'t> Parser<'t> {
     // ── Primary ────────────────────────────────────────────────────────────
 
     fn parse_primary(&mut self) -> Result<Expr, EgoError> {
+        // Entering any primary suspends the slot-value | terminator: inside
+        // grouped contexts (parens, blocks, object literals) the | is not a
+        // slot-list terminator and may be a binary operator.
+        let was_stop = self.stop_at_bar;
+        self.stop_at_bar = false;
+        let result = self.parse_primary_inner();
+        self.stop_at_bar = was_stop;
+        result
+    }
+
+    fn parse_primary_inner(&mut self) -> Result<Expr, EgoError> {
         let span = self.span();
         match self.peek().cloned() {
             Some(Token::Integer(n)) => { self.advance(); Ok(Expr { kind: ExprKind::Int(n),   span }) }
@@ -316,8 +329,10 @@ impl<'t> Parser<'t> {
                     // VarSlotDecl: ident <- expr
                     Some(Token::Binary(s)) if s == "<-" => {
                         self.advance(); self.advance(); // ident "<-"
-                        let value = self.parse_keyword()?;
-                        Ok(SlotDecl { kind: SlotDeclKind::Var { name, value }, span })
+                        self.stop_at_bar = true;
+                        let value = self.parse_keyword();
+                        self.stop_at_bar = false;
+                        Ok(SlotDecl { kind: SlotDeclKind::Var { name, value: value? }, span })
                     }
                     // ParentSlotDecl: ident * = expr
                     Some(Token::Binary(s)) if s == "*" => {
@@ -325,8 +340,10 @@ impl<'t> Parser<'t> {
                             return Err(self.err(span, "expected '=' after '*' in parent slot"));
                         }
                         self.advance(); self.advance(); self.advance(); // ident "*" "="
-                        let value = self.parse_keyword()?;
-                        Ok(SlotDecl { kind: SlotDeclKind::Parent { name, value }, span })
+                        self.stop_at_bar = true;
+                        let value = self.parse_keyword();
+                        self.stop_at_bar = false;
+                        Ok(SlotDecl { kind: SlotDeclKind::Parent { name, value: value? }, span })
                     }
                     // DataSlotDecl or unary MethodSlotDecl: ident = ...
                     Some(Token::Binary(s)) if s == "=" => {
@@ -340,8 +357,10 @@ impl<'t> Parser<'t> {
                             self.expect_rparen()?;
                             Ok(SlotDecl { kind: SlotDeclKind::Method { sel: MethodSel::Unary(name), body }, span })
                         } else {
-                            let value = self.parse_keyword()?;
-                            Ok(SlotDecl { kind: SlotDeclKind::Data { name, value }, span })
+                            self.stop_at_bar = true;
+                            let value = self.parse_keyword();
+                            self.stop_at_bar = false;
+                            Ok(SlotDecl { kind: SlotDeclKind::Data { name, value: value? }, span })
                         }
                     }
                     _ => Err(self.err(span, format!("expected '=', '<-', or '*' after slot name '{name}'"))),
@@ -421,14 +440,18 @@ impl<'t> Parser<'t> {
                 // DataSlotDecl: ident = expr
                 Some(Token::Ident(name)) if matches!(self.peek_at(1), Some(Token::Binary(s)) if s == "=") => {
                     self.advance(); self.advance(); // ident "="
-                    let init = self.parse_keyword()?;
-                    locals.push(BlockLocal { name, kind: LocalKind::Data, init });
+                    self.stop_at_bar = true;
+                    let init = self.parse_keyword();
+                    self.stop_at_bar = false;
+                    locals.push(BlockLocal { name, kind: LocalKind::Data, init: init? });
                 }
                 // VarSlotDecl: ident <- expr
                 Some(Token::Ident(name)) if matches!(self.peek_at(1), Some(Token::Binary(s)) if s == "<-") => {
                     self.advance(); self.advance(); // ident "<-"
-                    let init = self.parse_keyword()?;
-                    locals.push(BlockLocal { name, kind: LocalKind::Var, init });
+                    self.stop_at_bar = true;
+                    let init = self.parse_keyword();
+                    self.stop_at_bar = false;
+                    locals.push(BlockLocal { name, kind: LocalKind::Var, init: init? });
                 }
                 _ => return Err(self.err(span, "expected block slot declaration (':name', 'name = expr', or 'name <- expr')")),
             }

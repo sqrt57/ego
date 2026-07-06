@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::arena::ObjectId;
-use crate::ast::{CascadeMsg, Expr, ExprKind, Program, Stmt, StmtKind};
+use crate::ast::{CascadeMsg, Expr, ExprKind, ObjectLit, Program, SlotDeclKind, Stmt, StmtKind};
 use crate::bootstrap::Interpreter;
 use crate::env::{ActivationId, Env, env_new};
 use crate::error::{EgoError, SourceSpan};
@@ -268,21 +268,9 @@ pub fn eval_expr(
             if let Some(&val) = activation.env.borrow().get(name.as_str()) {
                 return Ok(val);
             }
-            let lobby = interp.roots.lobby;
-            let found = interp
-                .arena
-                .get(lobby)
-                .slots
-                .iter()
-                .find(|s| s.name == *name && matches!(s.kind, SlotKind::Data | SlotKind::Var))
-                .map(|s| s.value);
-            match found {
-                Some(val) => Ok(val),
-                None => Err(EgoSignal::Err(EgoError::new(
-                    expr.span.clone(),
-                    format!("undefined variable: {name}"),
-                ))),
-            }
+            // Bare identifiers are implicit unary sends to self.
+            // At top-level self_obj is the lobby, so lobby slots are found here too.
+            eval_send(activation.self_obj, name, &[], &expr.span, interp)
         }
 
         ExprKind::UnarySend { recv, sel } => {
@@ -359,11 +347,83 @@ pub fn eval_expr(
             Ok(last)
         }
 
-        ExprKind::Block(_) | ExprKind::Object(_) => Err(EgoSignal::Err(EgoError::new(
+        ExprKind::Block(_) => Err(EgoSignal::Err(EgoError::new(
             expr.span.clone(),
-            "blocks and object literals not yet implemented".into(),
+            "blocks not yet implemented".into(),
         ))),
+
+        ExprKind::Object(obj) => eval_object_lit(obj, activation, interp),
     }
+}
+
+fn eval_object_lit(obj: &ObjectLit, activation: &Activation, interp: &mut Interpreter) -> EvalResult {
+    let new_id = alloc_with_gc(&mut interp.arena, &interp.roots, Object::new(ObjectKind::Plain));
+    let roots_base = interp.roots.stack_roots.len();
+    interp.roots.stack_roots.push(new_id);
+    let result = eval_object_slots(obj, new_id, activation, interp);
+    interp.roots.stack_roots.truncate(roots_base);
+    result
+}
+
+fn eval_object_slots(
+    obj: &ObjectLit,
+    new_id: ObjectId,
+    activation: &Activation,
+    interp: &mut Interpreter,
+) -> EvalResult {
+    for decl in &obj.slots {
+        match &decl.kind {
+            SlotDeclKind::Data { name, value } => {
+                let val = eval_expr(value, activation, interp)?;
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: name.clone(),
+                    kind: SlotKind::Data,
+                    value: val,
+                });
+            }
+            SlotDeclKind::Var { name, value } => {
+                let val = eval_expr(value, activation, interp)?;
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: name.clone(),
+                    kind: SlotKind::Var,
+                    value: val,
+                });
+            }
+            SlotDeclKind::Parent { name, value } => {
+                let val = eval_expr(value, activation, interp)?;
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: name.clone(),
+                    kind: SlotKind::Parent,
+                    value: val,
+                });
+            }
+            SlotDeclKind::Arg { name } => {
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: name.clone(),
+                    kind: SlotKind::Arg,
+                    value: interp.roots.nil_id,
+                });
+            }
+            SlotDeclKind::Method { sel, body } => {
+                let method_def = Rc::new(MethodDef {
+                    params: sel.params(),
+                    body: body.clone(),
+                    source: decl.span.clone(),
+                });
+                let method_obj = alloc_with_gc(
+                    &mut interp.arena,
+                    &interp.roots,
+                    Object::new(ObjectKind::Method(method_def)),
+                );
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: sel.selector(),
+                    kind: SlotKind::Method,
+                    value: method_obj,
+                });
+            }
+        }
+    }
+    Ok(new_id)
 }
 
 /// Lex, parse, eval source in auto-print mode: returns the `printString` of the

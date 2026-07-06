@@ -48,3 +48,8 @@ fn run_golden_dir(dir: &str) {
 fn golden_1_5_literals() {
     run_golden_dir("tests/eval_golden/1.5-literals");
 }
+
+#[test]
+fn golden_1_6_objects() {
+    run_golden_dir("tests/eval_golden/1.6-objects");
+}
