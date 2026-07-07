@@ -7,10 +7,11 @@ language spec. It is sufficient to guide Stage 1 parallel ecosystem work and
 is not an exhaustive specification of all future library content.
 
 **In scope:**
-- Collections: `array`, `orderedCollection`, `dictionary`
+- Collections: `array`, `orderedCollection`, `dictionary`, `set`
 - I/O: console streams, file streams
 - String utilities beyond the core spec
-- Numeric utilities beyond the core spec
+- Numeric utilities beyond the core spec, including a `random` object
+- Logging: a leveled `log` object
 
 **Deferred:**
 - Networking, processes, FFI
@@ -180,6 +181,46 @@ d keysAndValuesDo: [:k :v |
 
 ---
 
+### Set
+
+`set` — an unordered collection with no duplicate elements. Membership and
+duplicate detection use `=`.
+
+**Creating:**
+
+```
+set new
+```
+
+**Messages:**
+
+| Message | Returns | Notes |
+|---|---|---|
+| `size` | Integer | Number of elements |
+| `add: obj` | `obj` | Insert; no effect if an equal element is already present |
+| `remove: obj` | `obj` | Remove element equal to `obj`; signals `error` if absent |
+| `remove: obj IfAbsent: aBlock` | Object | Like `remove:`, evaluates block if absent |
+| `includes: obj` | Boolean | True if an equal element is present |
+| `do: aBlock` | `self` | Evaluates `aBlock value: each` in unspecified order |
+| `addAll: aCollection` | `aCollection` | Insert all elements (any collection supporting `do:`) |
+| `asOrderedCollection` | OrderedCollection | Copy of elements, unspecified order |
+| `asArray` | Array | Fixed-size copy, unspecified order |
+| `copy` | Set | Shallow copy |
+| `printString` | String | Human-readable representation |
+
+**Example:**
+
+```
+| a seen |
+a: array new: 5.
+a at: 1 Put: 1; at: 2 Put: 2; at: 3 Put: 2; at: 4 Put: 3; at: 5 Put: 1.
+seen: set new.
+a do: [:each | seen add: each].
+stdout println: seen size. "3"
+```
+
+---
+
 ## I/O
 
 ### Console
@@ -309,6 +350,9 @@ transparent bignum promotion. These extend the numeric protocols.
 | `raisedTo: n` | Integer | Integer exponentiation for n ≥ 0; signals `error` for n < 0 |
 | `asFloat` | Float | Convert to float |
 | `printString: base` | String | Representation in given base (2–36) |
+| `even` | Boolean | True if divisible by 2 |
+| `odd` | Boolean | True if not divisible by 2 |
+| `factorial` | Integer | Product of 1..receiver; signals `error` if receiver < 0 |
 
 Note: `/` on two integers returns a float (IEEE division). Use `//` for
 integer division.
@@ -341,6 +385,69 @@ integer division.
 | `math log: x` | Float | Base-10 logarithm; signals `error` if x ≤ 0 |
 | `math exp: x` | Float | eˣ |
 
+### Random Numbers
+
+`random` is a lobby prototype for pseudo-random number generation. Each clone
+is an independent generator with its own state.
+
+**Creating:**
+
+```
+random new             "seeded from the system clock"
+random new: seed        "deterministic, reproducible sequence"
+```
+
+**Messages:**
+
+| Message | Returns | Notes |
+|---|---|---|
+| `next` | Float | Uniformly distributed in `[0, 1)` |
+| `nextInt: n` | Integer | Uniformly distributed in `[1, n]`; signals `error` if n < 1 |
+| `nextFloat: low To: high` | Float | Uniformly distributed in `[low, high)`; signals `error` if low >= high |
+| `nextBoolean` | Boolean | `true` or `false`, equal probability |
+| `seed: n` | `self` | Reseed the generator deterministically |
+
+**Example:**
+
+```
+| r |
+r: random new: 42.
+stdout println: (r nextInt: 6). "reproducible die roll"
+```
+
+---
+
+## Logging
+
+`log` is a lobby singleton providing system-wide leveled logging, in the spirit
+of Self's `log` object.
+
+**Levels**, in increasing severity: `debug`, `info`, `warn`, `error`, `fatal`.
+
+**Messages:**
+
+| Message | Returns | Notes |
+|---|---|---|
+| `debug: msg` | `self` | Log at debug severity |
+| `info: msg` | `self` | Log at info severity |
+| `warn: msg` | `self` | Log at warn severity |
+| `error: msg` | `self` | Log at error severity |
+| `fatal: msg` | `self` | Log at fatal severity |
+
+`msg` is either a String, or a zero-argument Block — if a Block, it is only
+evaluated (`value`) when a handler actually consumes the entry, so expensive
+message construction can be deferred:
+
+```
+log debug: ['expensive: ' , someExpensiveComputation asString].
+```
+
+**Default behavior:** `error` and `fatal` entries are written to `stderr` with
+a timestamp prefix (e.g. `[2026-07-07 16:25:07] error -- disk full`); `debug`,
+`info`, and `warn` entries are dropped unless a handler is installed. Handler
+registration for custom sinks (e.g. writing to a file, filtering by level) is
+deferred to a future revision of this spec.
+
 ---
 
 ## Lobby Bindings Summary
@@ -353,8 +460,11 @@ The following names are bound in the lobby in addition to those defined in
 | `array` | Array prototype |
 | `orderedCollection` | OrderedCollection prototype |
 | `dictionary` | Dictionary prototype |
+| `set` | Set prototype |
 | `stdin` | Standard input stream |
 | `stdout` | Standard output stream |
 | `stderr` | Standard error stream |
 | `fileStream` | File stream prototype (factory messages) |
 | `math` | Math object |
+| `random` | Random-number generator prototype |
+| `log` | Leveled logging singleton |
