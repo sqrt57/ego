@@ -501,7 +501,20 @@ time, so no AST nodes are generated for the setter — it is backed directly by 
 ### Cascades
 
 The parser produces a `Cascade` AST node holding a receiver expression and a
-list of message sends. The evaluator:
+list of message sends, where `recv` is the *true* shared receiver (e.g. `a`
+in `a foo; bar`) and `msgs` includes every cascaded message, including the
+one that appeared before the first `;` (`foo`, then `bar`).
+
+Getting there requires a small rewrite: ordinary expression parsing (parsing
+`a foo` before the `;` is even seen) naturally produces the full message send
+`UnarySend { recv: a, sel: "foo" }` as one node. On encountering `;`, the
+parser peels the outermost send off that node — `split_cascade_head` in
+`parser.rs` — recovering `a` as the true receiver and turning the peeled-off
+send into the first `CascadeMsg`. Without this step the evaluator would pin
+the *result* of `a foo` as the receiver of `bar`, which is wrong (see
+lang-spec.md §9).
+
+The evaluator itself stays simple given the corrected AST:
 
 1. Evaluates the receiver expression once and pins the `ObjectId`.
 2. Sends each message in the list to that pinned receiver in order.

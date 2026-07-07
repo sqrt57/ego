@@ -262,10 +262,20 @@ repeating it:
 collection add: 1; add: 2; add: 3.
 ```
 
-The receiver is the value of the expression immediately before the first `;`,
-evaluated exactly once. Each subsequent `;`-separated message is sent to that
-same receiver. The result of the whole cascade is the result of the *last*
-message in the chain.
+The receiver is the receiver of the *message immediately before the first
+`;`* — not that message's result. In `collection add: 1; add: 2; add: 3`,
+the shared receiver is `collection`; `add: 1` is itself the first cascaded
+message, sent to `collection` exactly like `add: 2` and `add: 3` are. The
+receiver expression is evaluated exactly once, however many messages precede
+the first `;`:
+
+```
+a foo bar: 1; baz.   "foo, then bar: 1, then baz — all three sent to a"
+```
+
+Each subsequent `;`-separated message is sent to that same receiver. The
+result of the whole cascade is the result of the *last* message in the
+chain.
 
 All three message kinds may appear in a cascade:
 
