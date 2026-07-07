@@ -256,7 +256,7 @@ pub fn eval_expr(
             interp.arena.get_mut(id).slots.push(Slot {
                 name: "parent*".to_string(),
                 kind: SlotKind::Parent,
-                value: interp.integer_proto,
+                value: interp.roots.integer_proto,
             });
             Ok(id)
         }
@@ -269,7 +269,7 @@ pub fn eval_expr(
             interp.arena.get_mut(id).slots.push(Slot {
                 name: "parent*".to_string(),
                 kind: SlotKind::Parent,
-                value: interp.float_proto,
+                value: interp.roots.float_proto,
             });
             Ok(id)
         }
@@ -282,7 +282,7 @@ pub fn eval_expr(
             interp.arena.get_mut(id).slots.push(Slot {
                 name: "parent*".to_string(),
                 kind: SlotKind::Parent,
-                value: interp.string_proto,
+                value: interp.roots.string_proto,
             });
             Ok(id)
         }

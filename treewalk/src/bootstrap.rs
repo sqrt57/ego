@@ -15,10 +15,6 @@ pub struct Interpreter {
     pub arena: Arena,
     pub roots: RootSet,
     pub prims: PrimitiveTable,
-    pub integer_proto: ObjectId,
-    pub float_proto: ObjectId,
-    pub string_proto: ObjectId,
-    pub block_proto: ObjectId,
     pub(crate) activation_counter: u64,
     pub(crate) live_activations: HashSet<ActivationId>,
 }
@@ -51,19 +47,53 @@ fn make_unary_prim_method(prim_sel: &str, arena: &mut Arena, roots: &RootSet) ->
     alloc_with_gc(arena, roots, Object::new(ObjectKind::Method(method_def)))
 }
 
-fn make_trait_with_unary_method(
-    method_name: &str,
-    prim_sel: &str,
+/// A one-argument method (backs binary and single-keyword selectors alike)
+/// whose body forwards `self` and the argument to a primitive.
+fn make_binary_prim_method(prim_sel: &str, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let span = bs_span();
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Box::new(Expr {
+            kind: ExprKind::KeywordSend {
+                recv: Box::new(Expr { kind: ExprKind::Self_, span: span.clone() }),
+                sel: prim_sel.to_string(),
+                args: vec![Expr { kind: ExprKind::Ident("other".to_string()), span: span.clone() }],
+            },
+            span: span.clone(),
+        })),
+        span: span.clone(),
+    }];
+    let method_def = Rc::new(MethodDef { params: vec!["other".to_string()], body, source: span });
+    alloc_with_gc(arena, roots, Object::new(ObjectKind::Method(method_def)))
+}
+
+fn make_const_string_method(s: &str, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let span = bs_span();
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Box::new(Expr { kind: ExprKind::Str(s.to_string()), span: span.clone() })),
+        span: span.clone(),
+    }];
+    let method_def = Rc::new(MethodDef { params: vec![], body, source: span });
+    alloc_with_gc(arena, roots, Object::new(ObjectKind::Method(method_def)))
+}
+
+/// Builds a trait object with unary methods (each forwarding to a zero-arg
+/// primitive) and binary/keyword-shaped methods (each forwarding `self` and
+/// one argument to a one-arg primitive).
+fn make_trait(
+    unary_methods: &[(&str, &str)],
+    binary_methods: &[(&str, &str)],
     arena: &mut Arena,
     roots: &RootSet,
 ) -> ObjectId {
-    let method_obj = make_unary_prim_method(prim_sel, arena, roots);
     let mut trait_obj = Object::new(ObjectKind::Plain);
-    trait_obj.slots.push(Slot {
-        name: method_name.to_string(),
-        kind: SlotKind::Method,
-        value: method_obj,
-    });
+    for &(name, prim_sel) in unary_methods {
+        let method_obj = make_unary_prim_method(prim_sel, arena, roots);
+        trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
+    for &(name, prim_sel) in binary_methods {
+        let method_obj = make_binary_prim_method(prim_sel, arena, roots);
+        trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
     alloc_with_gc(arena, roots, trait_obj)
 }
 
@@ -80,9 +110,13 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let string_proto  = arena.alloc(Object::new(ObjectKind::Plain));
     let block_proto   = arena.alloc(Object::new(ObjectKind::Plain));
 
-    roots.nil_id   = nil_id;
-    roots.true_id  = true_id;
-    roots.false_id = false_id;
+    roots.nil_id        = nil_id;
+    roots.true_id       = true_id;
+    roots.false_id      = false_id;
+    roots.integer_proto = integer_proto;
+    roots.float_proto   = float_proto;
+    roots.string_proto  = string_proto;
+    roots.block_proto   = block_proto;
 
     // Step 3: primitives
     let mut prims = PrimitiveTable::new();
@@ -104,30 +138,58 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let lobby_id = arena.alloc(lobby);
     roots.lobby = lobby_id;
 
-    // Wire printString for integers and floats via inline traits.
-    // (In later substages this moves to boot.ego once object-literal eval is ready.)
-    let int_trait = make_trait_with_unary_method("printString", "_IntPrintString", &mut arena, &roots);
+    // Wire numeric traits and boolean printString via inline Rust-hardcoded
+    // traits. (Moving this into boot.ego needs mirror-based reflection,
+    // substage 1.16, since boot.ego has no way to attach methods to an
+    // already-allocated prototype object before then.)
+    let int_trait = make_trait(
+        &[("printString", "_IntPrintString")],
+        &[
+            ("+", "_IntAdd:"), ("-", "_IntSub:"), ("*", "_IntMul:"), ("/", "_IntDiv:"),
+            ("<", "_IntLt:"), ("<=", "_IntLe:"), (">", "_IntGt:"), (">=", "_IntGe:"),
+            ("=", "_IntEq:"), ("~=", "_IntNe:"),
+        ],
+        &mut arena, &roots,
+    );
     arena.get_mut(integer_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
         value: int_trait,
     });
 
-    let float_trait = make_trait_with_unary_method("printString", "_FloatPrintString", &mut arena, &roots);
+    let float_trait = make_trait(
+        &[("printString", "_FloatPrintString")],
+        &[
+            ("+", "_FloatAdd:"), ("-", "_FloatSub:"), ("*", "_FloatMul:"), ("/", "_FloatDiv:"),
+            ("<", "_FloatLt:"), ("<=", "_FloatLe:"), (">", "_FloatGt:"), (">=", "_FloatGe:"),
+            ("=", "_FloatEq:"), ("~=", "_FloatNe:"),
+        ],
+        &mut arena, &roots,
+    );
     arena.get_mut(float_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
         value: float_trait,
     });
 
+    let true_print = make_const_string_method("true", &mut arena, &roots);
+    arena.get_mut(true_id).slots.push(Slot {
+        name: "printString".to_string(),
+        kind: SlotKind::Method,
+        value: true_print,
+    });
+
+    let false_print = make_const_string_method("false", &mut arena, &roots);
+    arena.get_mut(false_id).slots.push(Slot {
+        name: "printString".to_string(),
+        kind: SlotKind::Method,
+        value: false_print,
+    });
+
     let mut interp = Interpreter {
         arena,
         roots,
         prims,
-        integer_proto,
-        float_proto,
-        string_proto,
-        block_proto,
         activation_counter: 0,
         live_activations: HashSet::new(),
     };

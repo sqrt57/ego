@@ -58,3 +58,39 @@ fn golden_1_6_objects() {
 fn golden_1_7_var_slots() {
     run_golden_dir("tests/eval_golden/1.7-var-slots");
 }
+
+#[test]
+fn golden_1_8_arithmetic() {
+    run_golden_dir("tests/eval_golden/1.8-arithmetic");
+}
+
+fn eval_err(source: &str) -> String {
+    let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
+    match eval_source_print(source, "<test>", &mut interp) {
+        Ok(v) => panic!("expected an error but got: {v:?}"),
+        Err(EgoSignal::Err(e)) => e.message,
+        Err(sig) => panic!("expected EgoSignal::Err but got a different signal: {}", match sig {
+            EgoSignal::Exception(_) => "Exception",
+            EgoSignal::NonLocalReturn(_, _) => "NonLocalReturn",
+            EgoSignal::Err(_) => unreachable!(),
+        }),
+    }
+}
+
+#[test]
+fn int_add_overflow_is_fatal() {
+    let msg = eval_err("9223372036854775807 + 1");
+    assert!(msg.contains("overflow"), "got: {msg}");
+}
+
+#[test]
+fn int_div_by_zero_is_fatal() {
+    let msg = eval_err("1 / 0");
+    assert!(msg.contains("division by zero"), "got: {msg}");
+}
+
+#[test]
+fn float_div_by_zero_is_fatal() {
+    let msg = eval_err("1.0 / 0.0");
+    assert!(msg.contains("division by zero"), "got: {msg}");
+}

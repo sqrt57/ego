@@ -9,6 +9,10 @@ pub struct RootSet {
     pub nil_id: ObjectId,
     pub true_id: ObjectId,
     pub false_id: ObjectId,
+    pub integer_proto: ObjectId,
+    pub float_proto: ObjectId,
+    pub string_proto: ObjectId,
+    pub block_proto: ObjectId,
     pub stack_roots: Vec<ObjectId>,
     pub activation_envs: Vec<Env>,
 }
@@ -20,6 +24,10 @@ impl RootSet {
             nil_id: NULL_ID,
             true_id: NULL_ID,
             false_id: NULL_ID,
+            integer_proto: NULL_ID,
+            float_proto: NULL_ID,
+            string_proto: NULL_ID,
+            block_proto: NULL_ID,
             stack_roots: Vec::new(),
             activation_envs: Vec::new(),
         }
