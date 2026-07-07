@@ -60,6 +60,9 @@ ego> 'hi' , ' there'
 'hi there'
 ```
 
+There is no `exit`/`quit` message — the REPL reads until end-of-input.
+Exit with Ctrl-D (macOS/Linux) or Ctrl-Z then Enter (Windows).
+
 ### Inline eval
 
 ```
