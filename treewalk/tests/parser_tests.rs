@@ -375,61 +375,75 @@ fn trailing_dot_ok() {
 
 #[test]
 fn cascade_unary_msg() {
-    // a foo; bar
+    // a foo; bar  — both "foo" and "bar" go to "a"
     assert_eq!(
         expr("a foo; bar"),
         ExprKind::Cascade {
-            recv: Box::new(ex(ExprKind::UnarySend {
-                recv: Box::new(ex(ExprKind::Ident("a".into()))),
-                sel: "foo".into(),
-            })),
-            msgs: vec![CascadeMsg::Unary { sel: "bar".into(), span: ds() }],
+            recv: Box::new(ex(ExprKind::Ident("a".into()))),
+            msgs: vec![
+                CascadeMsg::Unary { sel: "foo".into(), span: ds() },
+                CascadeMsg::Unary { sel: "bar".into(), span: ds() },
+            ],
         }
     );
 }
 
 #[test]
 fn cascade_binary_msg() {
-    // a + 1; - 2
+    // a + 1; - 2  — both "+ 1" and "- 2" go to "a"
     assert_eq!(
         expr("a + 1; - 2"),
         ExprKind::Cascade {
-            recv: Box::new(ex(ExprKind::BinarySend {
-                recv: Box::new(ex(ExprKind::Ident("a".into()))),
-                sel: "+".into(),
-                arg: Box::new(ex(ExprKind::Int(1))),
-            })),
-            msgs: vec![CascadeMsg::Binary { sel: "-".into(), arg: ex(ExprKind::Int(2)), span: ds() }],
+            recv: Box::new(ex(ExprKind::Ident("a".into()))),
+            msgs: vec![
+                CascadeMsg::Binary { sel: "+".into(), arg: ex(ExprKind::Int(1)), span: ds() },
+                CascadeMsg::Binary { sel: "-".into(), arg: ex(ExprKind::Int(2)), span: ds() },
+            ],
         }
     );
 }
 
 #[test]
 fn cascade_keyword_msg() {
-    // a foo; bar: 2
+    // a foo; bar: 2  — both "foo" and "bar: 2" go to "a"
     assert_eq!(
         expr("a foo; bar: 2"),
         ExprKind::Cascade {
-            recv: Box::new(ex(ExprKind::UnarySend {
-                recv: Box::new(ex(ExprKind::Ident("a".into()))),
-                sel: "foo".into(),
-            })),
-            msgs: vec![CascadeMsg::Keyword { sel: "bar:".into(), args: vec![ex(ExprKind::Int(2))], span: ds() }],
+            recv: Box::new(ex(ExprKind::Ident("a".into()))),
+            msgs: vec![
+                CascadeMsg::Unary { sel: "foo".into(), span: ds() },
+                CascadeMsg::Keyword { sel: "bar:".into(), args: vec![ex(ExprKind::Int(2))], span: ds() },
+            ],
         }
     );
 }
 
 #[test]
 fn cascade_multi_msg() {
-    // a foo; bar; + 1  — three messages total: initial + two cascade continuations
+    // a foo; bar; + 1  — three messages, all sent to "a"
     let stmts = parse_ok("a foo; bar; + 1");
     match &stmts[0].kind {
         StmtKind::Expr(e) => match &e.kind {
-            ExprKind::Cascade { msgs, .. } => assert_eq!(msgs.len(), 2),
+            ExprKind::Cascade { recv, msgs } => {
+                assert_eq!(**recv, ex(ExprKind::Ident("a".into())));
+                assert_eq!(msgs.len(), 3);
+            }
             _ => panic!("expected Cascade"),
         },
         _ => panic!("expected Expr stmt"),
     }
+}
+
+#[test]
+fn cascade_no_leading_send() {
+    // a; foo  — "a" has no leading send to peel, so it is the receiver as-is
+    assert_eq!(
+        expr("a; foo"),
+        ExprKind::Cascade {
+            recv: Box::new(ex(ExprKind::Ident("a".into()))),
+            msgs: vec![CascadeMsg::Unary { sel: "foo".into(), span: ds() }],
+        }
+    );
 }
 
 // ── Blocks ─────────────────────────────────────────────────────────────────

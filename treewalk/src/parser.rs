@@ -147,12 +147,16 @@ impl<'t> Parser<'t> {
             return Ok(recv);
         }
         let span = recv.span.clone();
-        let mut msgs = Vec::new();
+        // `recv` is the full first send (e.g. `a foo`); peel its outermost
+        // message off so every cascade message — including this one — is
+        // sent to the same shared receiver (`a`), not to the first send's
+        // result.
+        let (base_recv, mut msgs) = split_cascade_head(recv);
         while self.peek() == Some(&Token::Semi) {
             self.advance();
             msgs.push(self.parse_cascade_msg()?);
         }
-        Ok(Expr { kind: ExprKind::Cascade { recv: Box::new(recv), msgs }, span })
+        Ok(Expr { kind: ExprKind::Cascade { recv: Box::new(base_recv), msgs }, span })
     }
 
     fn parse_cascade_msg(&mut self) -> Result<CascadeMsg, EgoError> {
@@ -462,6 +466,26 @@ impl<'t> Parser<'t> {
             }
         }
         Ok((params, locals))
+    }
+}
+
+// ── Cascade helpers ─────────────────────────────────────────────────────────
+
+/// If `expr` is itself a message send, peel off its outermost send so the
+/// send's receiver becomes the shared cascade receiver and the send itself
+/// becomes the first cascade message. Otherwise `expr` has no leading send
+/// to peel (e.g. a bare identifier before `;`), so it is the receiver as-is.
+fn split_cascade_head(expr: Expr) -> (Expr, Vec<CascadeMsg>) {
+    let span = expr.span.clone();
+    match expr.kind {
+        ExprKind::UnarySend { recv, sel } => (*recv, vec![CascadeMsg::Unary { sel, span }]),
+        ExprKind::BinarySend { recv, sel, arg } => {
+            (*recv, vec![CascadeMsg::Binary { sel, arg: *arg, span }])
+        }
+        ExprKind::KeywordSend { recv, sel, args } => {
+            (*recv, vec![CascadeMsg::Keyword { sel, args, span }])
+        }
+        kind => (Expr { kind, span }, Vec::new()),
     }
 }
 

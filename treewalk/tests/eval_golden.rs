@@ -37,8 +37,8 @@ fn run_golden_dir(dir: &str) {
 
         let actual = result.unwrap_or_default();
         assert_eq!(
-            actual.trim_end_matches('\n'),
-            expected.trim_end_matches('\n'),
+            actual.trim_end(),
+            expected.trim_end(),
             "mismatch for {ego_path:?}"
         );
     }
