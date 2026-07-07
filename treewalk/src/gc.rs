@@ -1,4 +1,5 @@
 use crate::arena::{Arena, ObjectId, NULL_ID};
+use crate::env::Env;
 use crate::object::{Object, ObjectKind};
 
 pub const GC_THRESHOLD: usize = 4096;
@@ -9,6 +10,7 @@ pub struct RootSet {
     pub true_id: ObjectId,
     pub false_id: ObjectId,
     pub stack_roots: Vec<ObjectId>,
+    pub activation_envs: Vec<Env>,
 }
 
 impl RootSet {
@@ -19,6 +21,7 @@ impl RootSet {
             true_id: NULL_ID,
             false_id: NULL_ID,
             stack_roots: Vec::new(),
+            activation_envs: Vec::new(),
         }
     }
 }
@@ -32,6 +35,11 @@ pub fn collect(arena: &mut Arena, roots: &RootSet) {
     push_if_valid(&mut worklist, roots.false_id);
     for &id in &roots.stack_roots {
         push_if_valid(&mut worklist, id);
+    }
+    for env in &roots.activation_envs {
+        for &val in env.borrow().values() {
+            push_if_valid(&mut worklist, val);
+        }
     }
 
     while let Some(id) = worklist.pop() {

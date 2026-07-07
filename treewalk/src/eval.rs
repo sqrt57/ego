@@ -146,13 +146,15 @@ fn eval_method(
     let activation = Activation { id, self_obj, resend_start, env };
     interp.live_activations.insert(id);
 
-    // Protect self_obj and args across the method body, which may alloc.
+    // Protect self_obj, args, and env bindings across the method body, which may alloc.
     let roots_base = interp.roots.stack_roots.len();
     interp.roots.stack_roots.push(self_obj);
     for &arg in args {
         interp.roots.stack_roots.push(arg);
     }
+    interp.roots.activation_envs.push(activation.env.clone());
     let result = eval_body(&method_def.body, &activation, interp);
+    interp.roots.activation_envs.pop();
     interp.roots.stack_roots.truncate(roots_base);
 
     interp.live_activations.remove(&id);
@@ -198,7 +200,9 @@ pub fn eval_program(
     let id = interp.next_activation_id();
     interp.live_activations.insert(id);
     let activation = Activation { id, self_obj, resend_start: None, env: env_new() };
+    interp.roots.activation_envs.push(activation.env.clone());
     let result = eval_body(program, &activation, interp);
+    interp.roots.activation_envs.pop();
     interp.live_activations.remove(&id);
 
     match result {
