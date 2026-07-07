@@ -419,6 +419,89 @@ primary, matching the old model, pending a dedicated substage.
 
 ---
 
+## 12. World Objects Survey (Remaining Ch. 4 Sections)
+
+Source: Self Handbook 2024.1, Chapter 4 ("The Self World"), sections not
+covered by a dedicated section above. Recorded here as reference for future
+design work; stances marked **TBD** are not yet decided and should not be
+treated as settled.
+
+### Pairs (§4.6)
+
+`traits pair` describes general arithmetic-pair behavior; `point` (2D
+coordinate) and `rectangle` (two opposing axis-aligned corners) are its two
+concrete uses. **Status: TBD** — not in `stdlib.md`'s current scope.
+
+### Collections, beyond what's in `stdlib.md` (§4.5)
+
+Self's own collection hierarchy is broader than ego's planned `array` /
+`orderedCollection` / `dictionary` / `set`: hash-based `sharedSet` /
+`sharedDictionary` (locking variants), sorted `treeSet` / `treeBag` (dynamic
+inheritance distinguishes empty/non-empty subtrees; degrades if fed
+pre-sorted input), circular doubly-linked `list`, `priorityQueue`, and a
+`collector` object that builds collections via the `&` operator (`(1 & 2 &
+3) asList`). **Status: TBD beyond what `stdlib.md` already specifies** — no
+plan yet for sorted/tree collections, priority queues, or `&`-based
+construction syntax (ego has no such operator).
+
+### Processes and Concurrency (§4.9)
+
+`semaphore`, `barrier`, `lock` primitives; a `channel` object wraps a target
+with locking and exposes `waitingInbox` (blocks until available),
+`waitingInboxTimeOut:IfTimedOut:`, non-blocking `inbox`, and
+`inboxTimeOut:`. `prompt` reads stdin and spawns one process per line.
+**Status: out of scope** — `ROADMAP.md` marks concurrency out of scope for
+the foreseeable stages; recorded here only for future reference if that
+changes.
+
+### Foreign Objects / FFI (§4.10)
+
+Proxies (`proxy`, `fctProxy`) wrap foreign pointers with validity metadata so
+snapshots can detect stale references after restore on a different machine;
+`foreignFct`/`foreignCode`/`foreignCodeDB` provide the ego-facing (well,
+Self-facing) API on top, with direct proxy manipulation discouraged.
+**Status: deferred** — `stdlib.md` already lists FFI under "Deferred."
+
+### I/O and Unix (§4.11)
+
+Self's own docs call this section outdated (pre-4.5) and defer to an `os`
+object. Covers raw syscalls (`creat`, `open`, `read`, `write`, `lseek`,
+`unlink`), `tcpConnectToHost:Port:IfFail:`, `select()` multiplexing, and a
+`prompt suspendWhile: [...]` idiom to stop the REPL prompt from stealing
+stdin. **Status: deferred** — networking is out of scope per `stdlib.md`;
+ego's own console/file I/O design already lives in `stdlib.md` and doesn't
+need Self's raw-syscall layer.
+
+### Miscellaneous Oddball Objects (§4.12)
+
+Singletons with no ego equivalent yet: `comparator` (sequence diffs),
+`desktop` (GUI controller — out of scope, see below), `memory` (GC/snapshot
+introspection), `monitor`, `preferences`, `thisHost`, `typeSizes`,
+`vmProfiling`. **Status: TBD**, mostly low priority; most are either
+GUI-adjacent (out of scope) or VM-introspection conveniences with no current
+ego use case.
+
+### Low-Level Interrupts and Textual Debugger (§4.13, §4.14)
+
+Control-C / Control-`\` interrupt a running process into an interactive menu
+(kill/background/suspend/stack-trace); the textual debugger supports
+`attach:`/`detach`/`cont`, stepping (`step`/`stepi`/`next`/`nexti`/`finish`),
+stack navigation (`trace`/`show`/`up`/`down`/`upLex`), and `lookup:`.
+**Status: TBD** — no ego debugger design exists yet; worth revisiting once
+the VM stages (2–3) are underway, since a textual debugger is much cheaper
+to build than a GUI one and Self's command set is a reasonable starting
+point.
+
+### Logging (§4.15)
+
+Self's `log` object (levels `debug`/`info`/`warn`/`error`/`fatal`, deferred
+block-valued messages, `log dispatcher`/`log prototypeHandlers` for custom
+sinks). **Status: adopted, simplified** — ego's version is specified in
+`stdlib.md` § Logging; handler registration for custom sinks is deferred to
+a future spec revision.
+
+---
+
 ## Ego Adoption Summary
 
 | Self feature | Ego stance | Notes |
