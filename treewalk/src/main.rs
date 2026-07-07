@@ -3,20 +3,65 @@ use std::io::{self, BufRead, Write};
 use treewalk::bootstrap::bootstrap;
 use treewalk::eval::{eval_source_print, eval_source_run, EgoSignal};
 
+enum Fragment {
+    Eval(String),
+    File(String),
+}
+
 enum CliMode {
     Repl,
-    Eval(String),
-    Script(String),
-    BadArgs,
+    Fragments(Vec<Fragment>),
+    Version,
+    Help,
+    BadArgs(String),
 }
 
 fn parse_args(args: &[String]) -> CliMode {
-    match args {
-        [] => CliMode::BadArgs,
-        [flag] if flag == "--repl" => CliMode::Repl,
-        [flag, code] if flag == "-e" => CliMode::Eval(code.clone()),
-        [path] if !path.starts_with('-') => CliMode::Script(path.clone()),
-        _ => CliMode::BadArgs,
+    let mut fragments: Vec<Fragment> = Vec::new();
+    let mut repl = false;
+    let mut version = false;
+    let mut help = false;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--repl" => { repl = true; i += 1; }
+            "--version" => { version = true; i += 1; }
+            "--help" => { help = true; i += 1; }
+            "-e" | "--eval" => {
+                if i + 1 >= args.len() {
+                    return CliMode::BadArgs(format!("{}: requires an argument", args[i]));
+                }
+                fragments.push(Fragment::Eval(args[i + 1].clone()));
+                i += 2;
+            }
+            s if s.starts_with("--eval=") => {
+                fragments.push(Fragment::Eval(s["--eval=".len()..].to_string()));
+                i += 1;
+            }
+            s if s.starts_with('-') => {
+                return CliMode::BadArgs(format!("unknown option: {s}"));
+            }
+            s => {
+                fragments.push(Fragment::File(s.to_string()));
+                i += 1;
+            }
+        }
+    }
+
+    let has_eval = fragments.iter().any(|f| matches!(f, Fragment::Eval(_)));
+    let has_files = fragments.iter().any(|f| matches!(f, Fragment::File(_)));
+    if has_eval && has_files {
+        return CliMode::BadArgs("-e and file arguments cannot be combined".to_string());
+    }
+
+    match (repl, version, help, fragments.is_empty()) {
+        (true, false, false, true) => CliMode::Repl,
+        (false, true, false, true) => CliMode::Version,
+        (false, false, true, true) => CliMode::Help,
+        (false, false, false, false) => CliMode::Fragments(fragments),
+        (false, false, false, true) => CliMode::BadArgs("no arguments given".to_string()),
+        _ => CliMode::BadArgs("conflicting options".to_string()),
     }
 }
 
@@ -105,9 +150,27 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = parse_args(&args);
 
-    if matches!(mode, CliMode::BadArgs) {
-        eprintln!("Usage: ego --repl | -e EXPR | FILE");
-        std::process::exit(2);
+    match mode {
+        CliMode::BadArgs(msg) => {
+            eprintln!("ego: {msg}");
+            eprintln!("Usage: ego --repl | -e EXPR [-e EXPR ...] | FILE [FILE ...]");
+            std::process::exit(2);
+        }
+        CliMode::Version => {
+            println!("ego {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        CliMode::Help => {
+            println!("Usage: ego --repl | -e EXPR [-e EXPR ...] | FILE [FILE ...]");
+            println!();
+            println!("Options:");
+            println!("  --repl            Start interactive REPL");
+            println!("  -e, --eval EXPR   Evaluate expression (may be repeated)");
+            println!("  --version         Print version and exit");
+            println!("  --help            Print this help and exit");
+            return;
+        }
+        _ => {}
     }
 
     let mut interp = match bootstrap() {
@@ -116,23 +179,29 @@ fn main() {
     };
 
     match mode {
-        CliMode::BadArgs => unreachable!(),
+        CliMode::BadArgs(_) | CliMode::Version | CliMode::Help => unreachable!(),
         CliMode::Repl => run_repl(&mut interp),
-        CliMode::Eval(code) => {
-            match eval_source_print(&code, "<eval>", &mut interp) {
-                Ok(Some(s)) => println!("{s}"),
-                Ok(None) => {}
-                Err(sig) => { print_signal(sig); std::process::exit(1); }
-            }
-        }
-        CliMode::Script(path) => {
-            let src = match std::fs::read_to_string(&path) {
-                Ok(s) => s,
-                Err(e) => { eprintln!("{path}: {e}"); std::process::exit(1); }
-            };
-            if let Err(sig) = eval_source_run(&src, &path, &mut interp) {
-                print_signal(sig);
-                std::process::exit(1);
+        CliMode::Fragments(fragments) => {
+            for fragment in fragments {
+                match fragment {
+                    Fragment::Eval(code) => {
+                        match eval_source_print(&code, "<eval>", &mut interp) {
+                            Ok(Some(s)) => println!("{s}"),
+                            Ok(None) => {}
+                            Err(sig) => { print_signal(sig); std::process::exit(1); }
+                        }
+                    }
+                    Fragment::File(path) => {
+                        let src = match std::fs::read_to_string(&path) {
+                            Ok(s) => s,
+                            Err(e) => { eprintln!("{path}: {e}"); std::process::exit(1); }
+                        };
+                        if let Err(sig) = eval_source_run(&src, &path, &mut interp) {
+                            print_signal(sig);
+                            std::process::exit(1);
+                        }
+                    }
+                }
             }
         }
     }
