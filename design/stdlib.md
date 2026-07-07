@@ -209,8 +209,8 @@ stdout show: 'Name: '.
 | name |
 name: stdin readLine.
 name isNil
-    ifTrue:  [stdout println: 'EOF reached']
-    ifFalse: [stdout println: 'Hello, ' , name].
+    ifTrue: [stdout println: 'EOF reached']
+    False:  [stdout println: 'Hello, ' , name].
 ```
 
 ---

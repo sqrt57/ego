@@ -386,7 +386,7 @@ primitive name from a normal dispatch miss.
 | `_ErrorSignal:` | 1 | Signal a `primitiveError` with the given message string |
 
 This list grows with substages. `boot.ego` builds the ego-facing API on top —
-`+` on an integer delegates to `_IntAdd:`, `ifTrue:ifFalse:` on a boolean
+`+` on an integer delegates to `_IntAdd:`, `ifTrue:False:` on a boolean
 evaluates the appropriate block, and so on.
 
 ---
@@ -406,8 +406,8 @@ Executed once at startup, before any user code:
 5. Set the root set's `lobby`, `nil_id`, `true_id`, `false_id` fields.
 6. Parse and evaluate `boot.ego` against the lobby. `boot.ego` defines:
    - Trait objects (`booleanTrait`, `integerTrait`, `floatTrait`, `stringTrait`,
-     `blockTrait`) with all method slots (`ifTrue:ifFalse:`, `+`, `printString`,
-     `value`, `whileTrue:`, `on:do:`, etc.)
+     `blockTrait`) with all method slots (`ifTrue:False:`, `+`, `printString`,
+     `value`, `whileTrue:`, `on:Do:`, etc.)
    - Parent slots on the permanent prototypes pointing to their traits
    - Derived library objects (`error`, `messageNotUnderstood`, `zeroDivide`, …)
    - Any lobby bindings that aren't permanent objects (e.g. `math`, collections)
@@ -532,9 +532,9 @@ The evaluator itself stays simple given the corrected AST:
 
 ### Exception handling
 
-`[body] on: ExceptionType do: [:e | handler]` is a keyword message sent to a
+`[body] on: ExceptionType Do: [:e | handler]` is a keyword message sent to a
 block. The evaluator intercepts this at method-slot lookup on block objects — it
-is not a special form. The `on:do:` method slot in `boot.ego` delegates to a
+is not a special form. The `on:Do:` method slot in `boot.ego` delegates to a
 `_BlockOnDo:Do:` primitive that:
 
 1. Evaluates the protected block.
@@ -597,7 +597,7 @@ path/to/file.ego:12:5: error: message not understood: foo
 ```
 
 Line and column are 1-based. For stack-like exception unwinding, the outermost
-`on:do:` handler or the top-level runner prints the span; intermediate frames do
+`on:Do:` handler or the top-level runner prints the span; intermediate frames do
 not print.
 
 ---

@@ -143,7 +143,7 @@ Spec: [§ Blocks](lang-spec.md#3-blocks).
 
 ### Substage 1.11 — Evaluator: booleans and control flow
 
-`true`/`false` prototypes, `ifTrue:ifFalse:`, `and:`, `or:`, `not`,
+`true`/`false` prototypes, `ifTrue:False:`, `and:`, `or:`, `not`,
 `whileTrue:` — no special syntax anywhere in the pipeline.
 
 Spec: [§ Control Flow via Messages](lang-spec.md#7-control-flow-via-messages).
@@ -175,7 +175,7 @@ Spec: [lang-spec.md](lang-spec.md) — section to be written.
 
 ### Substage 1.15 — Evaluator: exception handling
 
-Message-based exception handling consistent with Self: `[...] on: E do: [:e | ...]`
+Message-based exception handling consistent with Self: `[...] on: E Do: [:e | ...]`
 as a keyword message sent to a block. Exception types are prototype objects.
 Handlers are blocks receiving the exception object, which can be resumed,
 retried, or re-raised via messages. Built-in signals: message not understood,

@@ -221,16 +221,23 @@ fn binary_send() {
 
 #[test]
 fn binary_send_chain() {
-    // a + b - c  →  (a + b) - c
+    // a + b + c  →  (a + b) + c  — repeating the *same* operator associates left to right.
     let inner = ex(ExprKind::BinarySend {
         recv: Box::new(ex(ExprKind::Ident("a".into()))),
         sel: "+".into(),
         arg: Box::new(ex(ExprKind::Ident("b".into()))),
     });
     assert_eq!(
-        expr("a + b - c"),
-        ExprKind::BinarySend { recv: Box::new(inner), sel: "-".into(), arg: Box::new(ex(ExprKind::Ident("c".into()))) }
+        expr("a + b + c"),
+        ExprKind::BinarySend { recv: Box::new(inner), sel: "+".into(), arg: Box::new(ex(ExprKind::Ident("c".into()))) }
     );
+}
+
+#[test]
+fn error_mixed_binary_operators() {
+    // a + b - c mixes '+' and '-' without parentheses — not allowed.
+    let msg = parse_err("a + b - c");
+    assert!(msg.contains('+') && msg.contains('-'), "got: {msg}");
 }
 
 // ── Keyword sends ──────────────────────────────────────────────────────────
@@ -249,26 +256,69 @@ fn keyword_send_single() {
 
 #[test]
 fn keyword_send_multi() {
+    // Two cap-continued parts concatenate into one selector: at:Put:.
     assert_eq!(
-        expr("a at: 1 put: 2"),
+        expr("a at: 1 Put: 2"),
         ExprKind::KeywordSend {
             recv: Box::new(ex(ExprKind::Ident("a".into()))),
-            sel: "at:put:".into(),
+            sel: "at:Put:".into(),
             args: vec![ex(ExprKind::Int(1)), ex(ExprKind::Int(2))],
         }
     );
 }
 
 #[test]
-fn cap_keyword_send() {
+fn keyword_lowercase_part_nests() {
+    // a at: 1 put: 2  →  a at: (1 put: 2)
+    // A lowercase-initial part after the first doesn't continue "at:" — it
+    // closes that message and starts a new one, nested as its final argument.
     assert_eq!(
-        expr("a At: 1 Put: 2"),
+        expr("a at: 1 put: 2"),
         ExprKind::KeywordSend {
             recv: Box::new(ex(ExprKind::Ident("a".into()))),
-            sel: "At:Put:".into(),
-            args: vec![ex(ExprKind::Int(1)), ex(ExprKind::Int(2))],
+            sel: "at:".into(),
+            args: vec![ex(ExprKind::KeywordSend {
+                recv: Box::new(ex(ExprKind::Int(1))),
+                sel: "put:".into(),
+                args: vec![ex(ExprKind::Int(2))],
+            })],
         }
     );
+}
+
+#[test]
+fn keyword_nesting_three_deep() {
+    // 5 min: 6 min: 7 Max: 8 Max: 9 min: 10 Max: 11
+    // = 5 min: (6 min: 7 Max: 8 Max: (9 min: 10 Max: 11))
+    assert_eq!(
+        expr("5 min: 6 min: 7 Max: 8 Max: 9 min: 10 Max: 11"),
+        ExprKind::KeywordSend {
+            recv: Box::new(ex(ExprKind::Int(5))),
+            sel: "min:".into(),
+            args: vec![ex(ExprKind::KeywordSend {
+                recv: Box::new(ex(ExprKind::Int(6))),
+                sel: "min:Max:Max:".into(),
+                args: vec![
+                    ex(ExprKind::Int(7)),
+                    ex(ExprKind::Int(8)),
+                    ex(ExprKind::KeywordSend {
+                        recv: Box::new(ex(ExprKind::Int(9))),
+                        sel: "min:Max:".into(),
+                        args: vec![ex(ExprKind::Int(10)), ex(ExprKind::Int(11))],
+                    }),
+                ],
+            })],
+        }
+    );
+}
+
+#[test]
+fn error_keyword_message_cannot_start_with_cap_part() {
+    // A cap-initial part may only continue a message already in progress —
+    // it can never start one, so "At:" here is left unconsumed and the
+    // statement parser trips over it looking for a '.'.
+    let msg = parse_err("a At: 1 Put: 2");
+    assert!(!msg.is_empty());
 }
 
 #[test]

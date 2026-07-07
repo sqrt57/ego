@@ -94,3 +94,9 @@ fn float_div_by_zero_is_fatal() {
     let msg = eval_err("1.0 / 0.0");
     assert!(msg.contains("division by zero"), "got: {msg}");
 }
+
+#[test]
+fn mixed_binary_operators_without_parens_is_a_parse_error() {
+    let msg = eval_err("3 + 4 * 2");
+    assert!(msg.contains('+') && msg.contains('*'), "got: {msg}");
+}

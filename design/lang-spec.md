@@ -21,7 +21,7 @@ keywords baked into the grammar. If it can be a message send, it is one.
 | **Type system** | None — dynamically and uniformly typed, every value is an object |
 | **Syntax** | Smalltalk/Self family |
 | **Control flow** | Ordinary messages to booleans and blocks — no `if`/`while` keywords |
-| **Error handling** | Message-based exception handling — `on:do:` on blocks (§10) |
+| **Error handling** | Message-based exception handling — `on:Do:` on blocks (§10) |
 | **Concurrency** | None built-in |
 | **Reflection** | Mirror-based (§11) |
 | **Targets** | Multi-stage: Rust tree-walker → Rust bytecode VM → Zig VM → self-hosted compiler, see [implementation-platform.md](implementation-platform.md) |
@@ -50,7 +50,7 @@ double = ( self + self ).
 + other = ( self addTo: other ).
 
 "keyword method"
-between: lo and: hi = ( (self >= lo) and: (self <= hi) ).
+between: lo And: hi = ( (self >= lo) and: (self <= hi) ).
 ```
 
 Object literal syntax:
@@ -93,36 +93,94 @@ Three kinds of message send, in increasing binding strength (loosest first):
 
 | Kind | Example | Selector |
 |---|---|---|
-| Keyword | `dict at: 1 put: 2` | `at:put:` (parts concatenate) |
+| Keyword | `dict at: 1 Put: 2` | `at:Put:` (parts concatenate) |
 | Binary | `3 + 4` | `+` |
 | Unary | `4 factorial` | `factorial` |
 
-Keyword parts may start with a lowercase letter (`at:`, `put:`) or an
-uppercase letter (`IfTrue:`, `IfFalse:`). Both kinds participate in the same
-selector accumulation: `dict at: 1 IfAbsent: [nil]` sends the single message
-`at:IfAbsent:` with two arguments.
+A keyword message's first part must start with a lowercase letter (`at:`);
+only a message already in progress may continue with an uppercase-initial
+part (`Put:`, `IfAbsent:`). Consecutive parts follow this rule to decide
+whether they extend the current message or start a new one:
 
-Precedence, tightest first: **unary > binary > keyword**. Same-precedence
-messages associate left to right. Parentheses override precedence.
+- An uppercase-initial part **extends** the message in progress:
+  `dict at: 1 IfAbsent: [nil]` sends one message, `at:IfAbsent:`, with two
+  arguments.
+- A lowercase-initial part after the first **closes** the message in
+  progress and **starts a new one**, nested as that message's trailing
+  argument. This lets keyword sends chain right-to-left without
+  parentheses:
+
+  ```
+  5 min: 6 min: 7 Max: 8 Max: 9 min: 10 Max: 11
+  "= 5 min: (6 min: 7 Max: 8 Max: (9 min: 10 Max: 11))"
+  ```
+
+  Reading left to right: `5 min:` opens a message whose argument is `6`;
+  the next part, `min:`, is lowercase, so it closes that message (final
+  argument `6`) and opens a new one on `6`; `min:`'s argument is `7`, and
+  the following `Max:` (uppercase) extends that same message to
+  `min:Max:` with arguments `7, 8`; the next part is `Max:` again
+  (uppercase), extending it further to `min:Max:Max:` with arguments
+  `7, 8, 9`... except `9` is immediately followed by another lowercase
+  `min:`, so `9` becomes the receiver of yet another new message instead of
+  a plain argument. This is why the example above is a chain nested three
+  deep, not one flat six-argument send.
+
+  An unparenthesized keyword send can therefore only appear as the
+  *trailing* argument of another keyword message (where this rule can pick
+  it up) — never as a non-trailing argument, which is always parsed as a
+  plain binary expression.
+
+Precedence, tightest first: **unary > binary > keyword**. Parentheses override
+precedence.
+
+Binary messages have no associativity, except between identical operators,
+which associate left to right. Mixing different binary operators
+unparenthesized is a parse error — following Self rather than Smalltalk-80
+here, since it closes off the classic `3 + 4 * 2` footgun.
 
 ```
 3 + 4 factorial        "= 3 + (4 factorial)"
-dict at: 1 put: 2 + 3  "= dict at: 1 put: (2 + 3)"
+dict at: 1 Put: 2 + 3  "= dict at: 1 Put: (2 + 3)"
+3 + 4 + 7              "= (3 + 4) + 7 -- identical operators associate left to right"
+3 + 4 * 7              "parse error -- different binary operators require parentheses"
 ```
 
-A keyword message's parts always extend to the right — you cannot write an
-unparenthesized keyword send as the argument of another keyword send.
+Any of the three message kinds may be sent with the receiver omitted, in
+which case the receiver is `self`: `min: 5` means `self min: 5`, and `+ 3`
+means `self + 3`. A bare identifier such as `i` is the unary case — it reads
+a local variable or block parameter if one is in scope, and otherwise is an
+implicit unary send of that name to `self`, which is how var-slot setters
+get invoked without writing `self` (`i: i + 1` inside a block, §7).
 
-`self` refers to the original message receiver. `resend` is a pseudo-object
-used exactly like `self`, but continues the method lookup search from the
-current method's parent, instead of restarting it — the mechanism for calling
-an "overridden" method:
+`self` refers to the original message receiver, and is only meaningful
+inside a method slot's body.
+
+`resend` reaches an "overridden" method — one otherwise hidden because the
+current object (or one of its parents) already defines a slot with the same
+name. It is written as special syntax, not an ordinary message send: the
+reserved word `resend`, an immediately-following `.` (no whitespace around
+either side), and the message name:
 
 ```
-printString = ( resend printString , ' (custom)' ).
+printString = ( resend.printString , ' (custom)' ).
+resend.+ 5
+resend.min: 17 Max: 23
 ```
 
-Both `self` and `resend` are only meaningful inside a method slot's body.
+This **undirected resend** continues the lookup from the parent chain of
+the object that defined the currently executing method. When a method is
+reachable through more than one parent (an ambiguity that would otherwise
+be a `messageNotUnderstood`-style error), a **directed resend** picks a
+specific parent slot by name instead of `resend`, constraining the search
+to that one parent and its own ancestors:
+
+```
+intParent.min: 17 Max: 23   "resend, but only searching through the intParent slot"
+```
+
+`resend` (undirected or directed) is only meaningful inside a method slot's
+body.
 
 `^` returns a value early from the enclosing method or block:
 
@@ -156,9 +214,11 @@ the body. Parameters use the `:name` form; local variables use the same
 ```
 
 Blocks are invoked by sending `value` (zero params), `value:` (one param),
-`value:value:` (two params), and so on — ordinary keyword/unary messages,
-not special syntax. A block's result is the value of its last expression,
-or the value given to `^` if an early return is used.
+`value:With:` (two params), `value:With:With:` (three), and so on — ordinary
+keyword/unary messages, not special syntax. The repeated part is
+capitalized (`With:`, not `with:`) so it continues the same message instead
+of starting a new, nested one (§2). A block's result is the value of its
+last expression, or the value given to `^` if an early return is used.
 
 Blocks close over the enclosing scope by reference, including local
 variables and `self` at the point the block literal is evaluated.
@@ -214,7 +274,7 @@ message sends to booleans and blocks:
 ```
 (x > 0)
     ifTrue: ['positive']
-    ifFalse: ['non-positive']
+    False: ['non-positive']
 
 [i < 10] whileTrue: [
     i: i + 1
@@ -222,9 +282,12 @@ message sends to booleans and blocks:
 ```
 
 (`i: i + 1` sends the `i:` setter generated by `i`'s var slot — see §1. ego
-has no separate assignment operator; mutation is always a keyword message.)
+has no separate assignment operator; mutation is always a keyword message.
+The second part of the conditional send is capitalized — `ifTrue:False:`,
+not `ifTrue:ifFalse:` — so it continues the same message instead of
+starting a new, nested one, per the keyword-message grouping rule in §2.)
 
-`ifTrue:ifFalse:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, and `not` are
+`ifTrue:False:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, and `not` are
 ordinary keyword/unary methods on the `true`/`false` prototypes, taking
 blocks where lazy evaluation is required. `whileTrue:` is an ordinary
 keyword method on blocks.
@@ -237,11 +300,11 @@ The minimum needed to bootstrap:
 
 | Object | Provides |
 |---|---|
-| `true`, `false` | `ifTrue:ifFalse:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, `not` |
+| `true`, `false` | `ifTrue:False:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, `not` |
 | `nil` | The absence of a value; `isNil` → `true`, `notNil` → `false` |
 | Numbers | Arithmetic (`+ - * /`), comparison (`< > <= >= = ~=`), `printString` |
 | Strings | Concatenation (`,`), `printString` |
-| Blocks | `value`, `value:`, `value:value:`, …, `whileTrue:` |
+| Blocks | `value`, `value:`, `value:With:`, …, `whileTrue:` |
 | Exception prototypes | `error` (base type), `messageNotUnderstood`, `badBlockActivation`, `zeroDivide`, `primitiveError`; all respond to `signal` and `signal:` (§10) |
 
 All built-in objects respond to `copy` (shallow clone, as described in §1)
@@ -296,19 +359,21 @@ b baz.        "separate statement"
 ## 10. Exception Handling
 
 Exception handling is entirely message-based. There is no `try`/`catch`
-syntax — a block is the protected region, and `on:do:` is an ordinary keyword
-message sent to it.
+syntax — a block is the protected region, and `on:Do:` is an ordinary keyword
+message sent to it. The second part is capitalized (`Do:`, not `do:`) so it
+continues the `on:` message instead of starting a new, nested one — see the
+keyword-message grouping rule in §2.
 
 ### Protecting a region
 
 ```
-[risky code] on: ExceptionType do: [:e | handler].
+[risky code] on: ExceptionType Do: [:e | handler].
 ```
 
 The receiver block is evaluated. If an exception whose type is `ExceptionType`
 (or a subtype, via its parent chain) is signalled during that evaluation, the
 handler block is invoked with the exception object as its argument. The result
-of the `on:do:` expression is the result of whichever block completes normally.
+of the `on:Do:` expression is the result of whichever block completes normally.
 
 ### Signalling an exception
 
@@ -318,7 +383,7 @@ anException signal: 'description text'.
 ```
 
 `signal` is an ordinary method on exception prototype objects. It unwinds the
-stack searching for a matching `on:do:` handler.
+stack searching for a matching `on:Do:` handler.
 
 ### Handler operations
 
@@ -326,8 +391,8 @@ Inside the handler block, the exception object `e` understands:
 
 | Message | Effect |
 |---|---|
-| `e return` | Exits the `on:do:` expression, returning `nil` |
-| `e return: val` | Exits the `on:do:` expression, returning `val` |
+| `e return` | Exits the `on:Do:` expression, returning `nil` |
+| `e return: val` | Exits the `on:Do:` expression, returning `val` |
 | `e retry` | Re-executes the protected block from the beginning |
 | `e resume` | Resumes execution immediately after the `signal` send, returning `nil` to the signaller |
 | `e resume: val` | Resumes after `signal`, returning `val` to the signaller |
@@ -342,7 +407,7 @@ to `e return:` with the block's value.
 
 Exception types are ordinary prototype objects. Subtyping is expressed via
 parent slots — an exception is an instance of any type reachable through its
-parent chain. `on:do:` catches the named type and all of its subtypes.
+parent chain. `on:Do:` catches the named type and all of its subtypes.
 
 Built-in exception types:
 

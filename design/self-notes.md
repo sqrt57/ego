@@ -44,9 +44,9 @@ An object is an unordered collection of named **slots**. Self defines five kinds
 Method slots match the three message kinds:
 
 ```
-"unary"   abs = ( self < 0 ifTrue: [0 - self] ifFalse: [self] ).
+"unary"   abs = ( self < 0 ifTrue: [0 - self] False: [self] ).
 "binary"  + n = ( primitiveAdd: n ).
-"keyword" at: key put: val = ( ... ).
+"keyword" at: key Put: val = ( ... ).
 ```
 
 `self` inside a method refers to the original message receiver (not the object
@@ -119,8 +119,10 @@ Between the `|` delimiters: parameter declarations (`:name`) and local
 variable declarations (`name <- init`). Parameters are positional. The body
 follows the closing `|`.
 
-Blocks are invoked by sending `value` (0 params), `value:` (1), `value:value:`
-(2), etc. — ordinary messages, no special call syntax.
+Blocks are invoked by sending `value` (0 params), `value:` (1), `value:With:`
+(2), `value:With:With:` (3), etc. — ordinary messages, no special call
+syntax. The repeated part is capitalized (`With:`) rather than `value:value:`
+because of the keyword-message capitalization rule (§11).
 
 **Non-local return** — `^` inside a block returns from the *enclosing method*,
 not just from the block. This is the Smalltalk-80 convention. A block that
@@ -128,8 +130,8 @@ outlives its enclosing activation and then receives `value` when its return
 target is gone is a **dead block**; sending `value` to a dead block signals an
 error.
 
-**Ego stance — adopt.** Same block syntax, same `value`/`value:` activation,
-same `^` non-local-return semantics, same dead-block error.
+**Ego stance — adopt.** Same block syntax, same `value`/`value:With:`
+activation, same `^` non-local-return semantics, same dead-block error.
 
 ---
 
@@ -264,10 +266,10 @@ stack looking for a handler.
 ### Catching an exception
 
 ```
-[risky code] on: ExceptionType do: [:e | handler].
+[risky code] on: ExceptionType Do: [:e | handler].
 ```
 
-`on:do:` is a keyword method on blocks. It evaluates the receiver block; if
+`on:Do:` is a keyword method on blocks. It evaluates the receiver block; if
 an exception of `ExceptionType` (or a subtype via parent chain) is signalled,
 the handler block is invoked with the exception object as its argument.
 
@@ -280,7 +282,7 @@ Inside the handler block, `e` is the exception object. Available messages:
 
 | Message | Effect |
 |---|---|
-| `e return` / `e return: val` | Exits `on:do:` expression, returning nil / val |
+| `e return` / `e return: val` | Exits `on:Do:` expression, returning nil / val |
 | `e retry` | Re-executes the protected block from the start |
 | `e resume` / `e resume: val` | Resumes execution after the `signal` send |
 | `e outer` | Passes to the next outer handler for the same type |
@@ -300,7 +302,7 @@ error → primitiveError (arithmetic, etc.)
       → userDefinedError (user subclasses)
 ```
 
-Catching a parent type catches all subtypes, because `on:do:` checks the
+Catching a parent type catches all subtypes, because `on:Do:` checks the
 parent chain of the signalled exception against `ExceptionType`.
 
 ### Built-in exceptions in Self
@@ -312,7 +314,9 @@ parent chain of the signalled exception against `ExceptionType`.
 
 **Ego stance — adopt.**
 
-- `[...] on: E do: [:e | ...]` syntax and semantics: adopt exactly.
+- `[...] on: E Do: [:e | ...]` syntax and semantics: adopt (capitalization
+  per the keyword-grouping rule in §11 — not literally verified against
+  Self's own library naming, but required for ego's own grammar).
 - Exception types as prototype objects (parent chain = type hierarchy): adopt.
 - Handler messages (`return`, `retry`, `resume`, `outer`, `signal`): adopt.
 - Built-in exceptions: `error`, `messageNotUnderstood`, `badBlockActivation`,
@@ -353,21 +357,85 @@ arithmetic.
 
 ---
 
+## 11. Message Syntax and Precedence
+
+Source: Self Handbook 2024.1, §3.3 (Expressions) and §3.4.5 (Operators).
+
+### Precedence and binary-operator associativity
+
+Precedence, tightest first: unary > binary > keyword — same as Smalltalk-80.
+But binary messages **have no associativity except between identical
+operators**: `3 + 4 + 7` parses as `(3 + 4) + 7`, while `3 + 4 * 7` is
+illegal and must be parenthesized. Smalltalk-80 allows any mix of binary
+operators to associate left-to-right (`3 + 4 * 2` = 14); Self deliberately
+closes off that footgun.
+
+### Keyword-message grouping via capitalization
+
+A keyword message's first part must be lowercase-initial (or `_`); a
+cap-initial part *continues* the message in progress, but a lowercase-initial
+part *closes* it and starts a new, nested message — right-associatively,
+with no parentheses needed:
+
+```
+5 min: 6 min: 7 Max: 8 Max: 9 min: 10 Max: 11
+"= 5 min: (6 min: 7 Max: 8 Max: (9 min: 10 Max: 11))"
+```
+
+This is a real constraint on naming, not just a style convention: any
+multi-part keyword selector where the parts should concatenate into one
+message *must* capitalize every part after the first. Self's own library
+reflects this — `ifTrue:False:` (not `ifTrue:ifFalse:`), `value:With:` for
+two-arg block activation (not `value:value:`).
+
+### Implicit-receiver messages
+
+Unary, binary, and keyword messages can all be sent with the receiver
+omitted, meaning "send to `self`": `factorial`, `+ 3`, `max: 5`. Lookup for
+these begins at the *current activation* (locals/params first), not at the
+receiver directly — this is how assignable-slot access reads (`t`) and
+writes (`t: 17`) without writing `self` everywhere. Explicitly sending to
+`self` is considered bad style in Self.
+
+### Resend syntax
+
+`resend` is not an ordinary object sent ordinary messages — it's special,
+whitespace-sensitive syntax: `resend.display`, `resend.min: 17 Max: 23` (no
+space around the `.`). Self additionally supports **directed resend**:
+naming a specific parent slot instead of `resend` (`intParent.min: 17`)
+constrains the lookup to that one parent, resolving the case where a method
+is reachable through more than one parent.
+
+**Ego stance — adopt all of the above**, with the naming fallout that
+implies: every ego selector with a lowercase-initial part after the first
+had to be renamed to capitalize it (`on:do:` → `on:Do:`, `ifTrue:ifFalse:` →
+`ifTrue:False:`, `value:value:` → `value:With:`, `between:and:` →
+`between:And:`). The binary-operator restriction and keyword-grouping rule
+are implemented in `treewalk/src/parser.rs` (`parse_binary`,
+`parse_keyword_chain`); implicit-receiver binary/keyword sends and the
+resend dot-syntax are documented in `lang-spec.md`/`lang-grammar.md` but not
+yet implemented — `resend` is currently parsed as an ordinary pseudo-object
+primary, matching the old model, pending a dedicated substage.
+
+---
+
 ## Ego Adoption Summary
 
 | Self feature | Ego stance | Notes |
 |---|---|---|
 | Prototype-based objects | Adopt | Core to ego |
 | Five slot kinds | Adopt | Same semantics, minor syntax diff for arg slots |
-| `self` / `resend` | Adopt | Identical semantics |
+| `self` / `resend` semantics | Adopt | Dot-syntax + directed resend documented, not yet implemented |
 | Prototype/traits split | Adopt as idiom | Not enforced by language |
 | Lookup algorithm (depth-first, ambiguity error) | Adopt | |
-| Blocks, `value`/`value:` activation | Adopt | |
+| Blocks, `value`/`value:With:` activation | Adopt | Not `value:value:` — see §11 |
 | `^` non-local return, dead-block error | Adopt | |
 | Lobby as root | Adopt | |
 | Cascades (`;`) | Adopt | Spec section pending |
 | Mirror API (`reflect:`, stratified) | Adopt, simplified | No sub-mirrors in Stage 1 |
-| `on:do:` exception handling | Adopt | `ExceptionSet` deferred |
+| `on:Do:` exception handling | Adopt | `ExceptionSet` deferred |
+| Binary-operator restriction, keyword capitalization/nesting | Adopt | See §11; implemented in parser |
+| String escapes, line continuation | Adopt | Documented, not yet implemented |
 | Numeric tower (int/bignum/float) | Adopt | |
 | Characters as separate type | Diverge | ego characters are integers (codepoints) |
 | Image-based persistence | Diverge | Not in Stage 1; image design TBD |

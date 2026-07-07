@@ -166,8 +166,8 @@ impl<'t> Parser<'t> {
                 self.advance();
                 Ok(CascadeMsg::Unary { sel, span })
             }
-            Some(Token::Keyword(_)) | Some(Token::CapKeyword(_)) => {
-                let (sel, args) = self.parse_keyword_parts()?;
+            Some(Token::Keyword(_)) => {
+                let (sel, args) = self.parse_keyword_chain()?;
                 Ok(CascadeMsg::Keyword { sel, args, span })
             }
             Some(Token::Binary(sel)) => {
@@ -183,33 +183,75 @@ impl<'t> Parser<'t> {
 
     fn parse_keyword(&mut self) -> Result<Expr, EgoError> {
         let recv = self.parse_binary()?;
-        if !matches!(self.peek(), Some(Token::Keyword(_)) | Some(Token::CapKeyword(_))) {
+        // A keyword message may only *start* with a lowercase-initial part;
+        // a bare `CapKeyword` here belongs to something else entirely (or is
+        // an error the caller will report), not the start of a new message.
+        if !matches!(self.peek(), Some(Token::Keyword(_))) {
             return Ok(recv);
         }
+        self.parse_keyword_tail(recv)
+    }
+
+    /// Parses one or more `(keyword_part | cap_keyword_part) BinaryExpr` pairs
+    /// onto `recv`, given that the next token is already known to be a
+    /// lowercase-initial `keyword_part`.
+    ///
+    /// A `cap_keyword_part` continues the message in progress. A
+    /// lowercase-initial `keyword_part` instead closes it: the value just
+    /// parsed as its argument is reinterpreted as the *receiver* of a new,
+    /// nested keyword message, built by recursing into this same function.
+    /// This is what lets keyword sends chain right-to-left with no
+    /// parentheses — see lang-spec.md §2 for the worked example.
+    fn parse_keyword_tail(&mut self, recv: Expr) -> Result<Expr, EgoError> {
         let span = recv.span.clone();
-        let (sel, args) = self.parse_keyword_parts()?;
+        let (sel, args) = self.parse_keyword_chain()?;
         Ok(Expr { kind: ExprKind::KeywordSend { recv: Box::new(recv), sel, args }, span })
     }
 
-    fn parse_keyword_parts(&mut self) -> Result<(String, Vec<Expr>), EgoError> {
+    /// Core of `parse_keyword_tail`, factored out so cascades (which need the
+    /// flat `(sel, args)` pair rather than a `KeywordSend` wrapping a real
+    /// receiver) can share the same grouping logic.
+    fn parse_keyword_chain(&mut self) -> Result<(String, Vec<Expr>), EgoError> {
         let mut sel = String::new();
         let mut args = Vec::new();
-        while matches!(self.peek(), Some(Token::Keyword(_)) | Some(Token::CapKeyword(_))) {
+        loop {
             let kw = match self.advance().token.clone() {
                 Token::Keyword(s) | Token::CapKeyword(s) => s,
-                _ => unreachable!(),
+                _ => unreachable!("caller/loop guarantees a keyword part here"),
             };
             sel.push_str(&kw);
-            args.push(self.parse_binary()?);
+            let arg = self.parse_binary()?;
+            if matches!(self.peek(), Some(Token::Keyword(_))) {
+                args.push(self.parse_keyword_tail(arg)?);
+                break;
+            }
+            args.push(arg);
+            if !matches!(self.peek(), Some(Token::CapKeyword(_))) {
+                break;
+            }
         }
         Ok((sel, args))
     }
 
     fn parse_binary(&mut self) -> Result<Expr, EgoError> {
         let mut recv = self.parse_unary()?;
+        let mut chain_sel: Option<String> = None;
         while let Some(Token::Binary(sel)) = self.peek().cloned() {
             if self.stop_at_bar && sel == "|" { break; }
             let span = self.span();
+            if let Some(first) = &chain_sel {
+                if *first != sel {
+                    return Err(self.err(
+                        span,
+                        format!(
+                            "cannot mix binary operators '{first}' and '{sel}' in one \
+                             expression without parentheses"
+                        ),
+                    ));
+                }
+            } else {
+                chain_sel = Some(sel.clone());
+            }
             self.advance();
             let arg = self.parse_unary()?;
             recv = Expr {

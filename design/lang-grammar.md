@@ -60,8 +60,13 @@ ordinary identifiers bound in the lobby.
     keyword_part     = identifier ":" .          (* lowercase-start keyword part *)
     cap_keyword_part = cap_letter { letter | decimal_digit } ":" .
     binary_char      = "+" | "-" | "*" | "/" | "~" | "<" | ">"
-                      | "=" | "&" | "|" | "@" | "%" | "," | "?" | "!" .
+                      | "=" | "&" | "@" | "%" | "," | "?" | "!" .
     binary_selector  = binary_char { binary_char } .
+
+`|` and `^` are excluded from `binary_char`: `|` delimits slot lists in
+object and block literals (`(| ... |)`, `[| ... |]`), and `^` marks a
+return statement. Allowing either into a binary selector would make the
+lexer ambiguous at those boundaries.
 
 ### Integer Literals
 
@@ -89,10 +94,26 @@ At least one digit is required on each side of `.`.
 
 ### String Literals
 
-    string_lit  = "'" { string_char | "''" } "'" .
-    string_char = /* any unicode_char except "'" */ .
+    string_lit     = "'" { string_char | escape_seq | "''" | continuation } "'" .
+    string_char    = /* any unicode_char except "'" and "\" */ .
+    continuation   = "\" "\n" .                  (* escaped newline; contributes no character *)
+    escape_seq     = "\" ( "t" | "b" | "n" | "f" | "r" | "v" | "a" | "0"
+                          | "\" | "'" | `"` | "?"
+                          | "x" hex_digit hex_digit
+                          | "d" decimal_digit decimal_digit decimal_digit
+                          | "o" oct_digit oct_digit oct_digit ) .
+    hex_digit      = decimal_digit | "a" … "f" | "A" … "F" .
+    oct_digit      = "0" … "7" .
 
-`''` inside a string is a literal `'` character.
+`''` inside a string is a literal `'` character, kept for Smalltalk-style
+quoting alongside the backslash escapes. `\t \b \n \f \r \v \a \0` are the
+usual control-character escapes; `\\`, `\'`, `\"`, `\?` escape themselves;
+`\xHH`, `\dDDD`, `\oOOO` give a character by hex/decimal/octal code
+respectively (carriage return can be written `\r`, `\x0d`, `\d013`, or
+`\o015`). A `\` immediately followed by a newline is a **line
+continuation** — both the backslash and the newline are dropped, letting a
+string literal span multiple source lines without embedding the newline
+itself.
 
 ---
 
@@ -127,24 +148,75 @@ See [lang-spec.md §9](lang-spec.md#9-cascades) for semantics.
 Precedence, loosest to tightest: keyword, binary, unary.
 
     Expr        = KeywordExpr | BinaryExpr .
-    KeywordExpr = BinaryExpr { ( keyword_part | cap_keyword_part ) BinaryExpr } .
-    BinaryExpr  = UnaryExpr { binary_selector UnaryExpr } .
+    KeywordExpr = [ BinaryExpr ] ( keyword_part | cap_keyword_part ) BinaryExpr
+                  { ( keyword_part | cap_keyword_part ) BinaryExpr }
+                | BinaryExpr
+                .
+    BinaryExpr  = [ UnaryExpr ] binary_selector UnaryExpr { binary_selector UnaryExpr }
+                | UnaryExpr
+                .
     UnaryExpr   = Primary { unary_selector } .
+
+The leading `BinaryExpr`/`UnaryExpr` may be omitted from a `KeywordExpr` or
+`BinaryExpr` — an **implicit-receiver send**, meaning "send to `self`":
+`min: 5` alone means `self min: 5`, and `+ 3` alone means `self + 3`. A bare
+`unary_selector` needs no such alternative in the grammar, since a plain
+`identifier` is already a `Primary`; whether it resolves to a local
+variable/parameter or to an implicit unary send to `self` is a lookup-time
+distinction, not a parse-time one — see
+[lang-spec.md §2](lang-spec.md#2-messages).
+
+Repeated `binary_selector` tokens within one `BinaryExpr` must all be
+identical — this isn't expressible in the BNF above, so it's checked as a
+parse-time constraint. `3 + 4 + 7` is valid (repeats `+`); `3 + 4 * 7` is a
+syntax error (mixes `+` and `*`) and must be parenthesized: `(3 + 4) * 7` or
+`3 + (4 * 7)`. See [lang-spec.md §2](lang-spec.md#2-messages).
+
+The first `( keyword_part | cap_keyword_part )` consumed by a `KeywordExpr`
+must be a plain `keyword_part` (lowercase-initial) — a `cap_keyword_part`
+may only continue a keyword message already in progress, never start one.
+This, together with how consecutive parts group into possibly-nested
+sends, is a semantic constraint layered on top of the flat token sequence
+above; see [lang-spec.md §2](lang-spec.md#2-messages) for the grouping
+algorithm and worked examples.
 
     Primary = integer_lit
             | float_lit
             | string_lit
             | identifier
             | "self"
-            | "resend"
+            | ResendExpr
             | "(" Expr ")"
             | ObjectLiteral
             | BlockLiteral
             .
 
-Consecutive keyword parts — small or cap — accumulate into one selector and
-argument list: `at: 1 Put: 2` is a single send of `at:Put:` with two
-arguments, not two sends.
+### Resends
+
+    ResendExpr = ResendTarget "." ResendMessage .
+    ResendTarget = "resend" | identifier .
+    ResendMessage = unary_selector
+                  | binary_selector UnaryExpr
+                  | ( keyword_part | cap_keyword_part ) BinaryExpr
+                    { ( keyword_part | cap_keyword_part ) BinaryExpr }
+                  .
+
+No whitespace may separate `ResendTarget`, `"."`, and the start of
+`ResendMessage` — `resend.display`, `resend.+ 5`, `resend.min: 17 Max: 23`.
+`"resend"` is an **undirected resend**: lookup continues from the parent
+chain of the object that defined the currently executing method, in the
+usual depth-first left-to-right order. An `identifier` naming one of that
+object's own parent slots is a **directed resend**: lookup is constrained
+to that one parent slot's value and its own ancestors, resolving
+ambiguity when a method is reachable through more than one parent. See
+[lang-spec.md §2](lang-spec.md#2-messages).
+
+A cap-initial keyword part continues the *same* selector as the part before
+it: `at: 1 Put: 2` is a single send of `at:Put:` with two arguments, not two
+sends. A lowercase-initial keyword part after the first, by contrast, ends
+the current message and starts a **new, nested** one, right-associatively
+— see [lang-spec.md §2](lang-spec.md#2-messages) for the full grouping
+rule and worked examples.
 
 ### Object Literals
 
