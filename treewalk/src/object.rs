@@ -26,6 +26,10 @@ pub enum ObjectKind {
     StringVal(Box<str>),
     Method(Rc<MethodDef>),
     Block(Box<BlockData>),
+    /// Synthetic setter installed alongside every `Var` slot; holds the
+    /// name of the var slot it mutates. Not backed by AST or the primitive
+    /// table since primitives are bare fn pointers with no per-slot state.
+    VarSetter(String),
 }
 
 #[derive(Debug)]

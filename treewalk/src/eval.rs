@@ -28,6 +28,7 @@ pub struct Activation {
 enum SlotLookup {
     Method(Rc<MethodDef>),
     Value(ObjectId),
+    VarSetter(ObjectId, String),
 }
 
 fn lookup_slot(recv: ObjectId, sel: &str, interp: &Interpreter) -> Option<SlotLookup> {
@@ -49,13 +50,13 @@ fn lookup_in(
     for slot in &obj.slots {
         if slot.name == sel {
             return match &slot.kind {
-                SlotKind::Method => {
-                    if let ObjectKind::Method(m) = &interp.arena.get(slot.value).kind {
-                        Some(SlotLookup::Method(m.clone()))
-                    } else {
-                        None
+                SlotKind::Method => match &interp.arena.get(slot.value).kind {
+                    ObjectKind::Method(m) => Some(SlotLookup::Method(m.clone())),
+                    ObjectKind::VarSetter(name) => {
+                        Some(SlotLookup::VarSetter(id, name.clone()))
                     }
-                }
+                    _ => None,
+                },
                 SlotKind::Data | SlotKind::Var => Some(SlotLookup::Value(slot.value)),
                 _ => None,
             };
@@ -111,6 +112,34 @@ pub fn eval_send(
             eval_method(recv, None, method_def, args, span, interp)
         }
         Some(SlotLookup::Value(val)) => Ok(val),
+        Some(SlotLookup::VarSetter(owner, name)) => {
+            if args.len() != 1 {
+                return Err(EgoSignal::Err(EgoError::new(
+                    span.clone(),
+                    format!(
+                        "wrong number of arguments: expected 1, got {}",
+                        args.len()
+                    ),
+                )));
+            }
+            let new_val = args[0];
+            let slot = interp
+                .arena
+                .get_mut(owner)
+                .slots
+                .iter_mut()
+                .find(|s| s.kind == SlotKind::Var && s.name == name);
+            match slot {
+                Some(s) => {
+                    s.value = new_val;
+                    Ok(new_val)
+                }
+                None => Err(EgoSignal::Err(EgoError::new(
+                    span.clone(),
+                    format!("var slot not found: {name}"),
+                ))),
+            }
+        }
         None => Err(EgoSignal::Err(EgoError::new(
             span.clone(),
             format!("message not understood: {sel}"),
@@ -391,6 +420,18 @@ fn eval_object_slots(
                     name: name.clone(),
                     kind: SlotKind::Var,
                     value: val,
+                });
+                // `val` is now reachable through `new_id`'s slots, so this
+                // alloc (which may trigger GC) is safe.
+                let setter_id = alloc_with_gc(
+                    &mut interp.arena,
+                    &interp.roots,
+                    Object::new(ObjectKind::VarSetter(name.clone())),
+                );
+                interp.arena.get_mut(new_id).slots.push(Slot {
+                    name: format!("{name}:"),
+                    kind: SlotKind::Method,
+                    value: setter_id,
                 });
             }
             SlotDeclKind::Parent { name, value } => {

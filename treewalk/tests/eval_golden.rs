@@ -53,3 +53,8 @@ fn golden_1_5_literals() {
 fn golden_1_6_objects() {
     run_golden_dir("tests/eval_golden/1.6-objects");
 }
+
+#[test]
+fn golden_1_7_var_slots() {
+    run_golden_dir("tests/eval_golden/1.7-var-slots");
+}
