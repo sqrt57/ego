@@ -182,10 +182,15 @@ impl<'t> Parser<'t> {
     // ── Keyword / Binary / Unary ───────────────────────────────────────────
 
     fn parse_keyword(&mut self) -> Result<Expr, EgoError> {
-        let recv = self.parse_binary()?;
-        // A keyword message may only *start* with a lowercase-initial part;
-        // a bare `CapKeyword` here belongs to something else entirely (or is
-        // an error the caller will report), not the start of a new message.
+        // Implicit-receiver keyword send: `min: 5` alone means `self min: 5`
+        // (lang-spec.md §2). Only a lowercase-initial part may start a
+        // message this way — a bare `CapKeyword` here belongs to something
+        // else entirely (or is an error the caller will report).
+        let recv = if matches!(self.peek(), Some(Token::Keyword(_))) {
+            Expr { kind: ExprKind::Self_, span: self.span() }
+        } else {
+            self.parse_binary()?
+        };
         if !matches!(self.peek(), Some(Token::Keyword(_))) {
             return Ok(recv);
         }
@@ -234,7 +239,15 @@ impl<'t> Parser<'t> {
     }
 
     fn parse_binary(&mut self) -> Result<Expr, EgoError> {
-        let mut recv = self.parse_unary()?;
+        // Implicit-receiver binary send: `+ 3` alone means `self + 3`
+        // (lang-spec.md §2). Excludes a `|` that's about to close a slot
+        // list (`stop_at_bar`) — that's a terminator, not a message start.
+        let mut recv = match self.peek().cloned() {
+            Some(Token::Binary(sel)) if !(self.stop_at_bar && sel == "|") => {
+                Expr { kind: ExprKind::Self_, span: self.span() }
+            }
+            _ => self.parse_unary()?,
+        };
         let mut chain_sel: Option<String> = None;
         while let Some(Token::Binary(sel)) = self.peek().cloned() {
             if self.stop_at_bar && sel == "|" { break; }
@@ -296,6 +309,17 @@ impl<'t> Parser<'t> {
                 if self.peek() == Some(&Token::ResendDot) {
                     self.advance();
                     self.parse_resend_message(ResendTarget::Directed(s), span)
+                } else if matches!(self.peek(), Some(Token::Binary(op)) if op == "<-") {
+                    // `name <- expr` as a body statement/expression (as opposed
+                    // to the same token sequence inside a `| ... |` slot-decl
+                    // header, which `parse_slot_decl`/`parse_block_slots`
+                    // handle separately): reassigns `name` in the enclosing
+                    // env. The value swallows the rest of the expression via
+                    // the full `parse_keyword` entry point, same precedence
+                    // as a slot-decl value.
+                    self.advance(); // "<-"
+                    let value = self.parse_keyword()?;
+                    Ok(Expr { kind: ExprKind::Assign { name: s, value: Box::new(value) }, span })
                 } else {
                     Ok(Expr { kind: ExprKind::Ident(s), span })
                 }
@@ -527,7 +551,7 @@ impl<'t> Parser<'t> {
         self.expect_rbracket()?;
 
         Ok(Expr {
-            kind: ExprKind::Block(Box::new(BlockLit { params, locals, body, span: span.clone() })),
+            kind: ExprKind::Block(Rc::new(BlockLit { params, locals, body, span: span.clone() })),
             span,
         })
     }

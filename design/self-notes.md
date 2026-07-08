@@ -125,13 +125,20 @@ syntax. The repeated part is capitalized (`With:`) rather than `value:value:`
 because of the keyword-message capitalization rule (§11).
 
 **Non-local return** — `^` inside a block returns from the *enclosing method*,
-not just from the block. This is the Smalltalk-80 convention. A block that
-outlives its enclosing activation and then receives `value` when its return
-target is gone is a **dead block**; sending `value` to a dead block signals an
-error.
+not just from the block. This is the Smalltalk-80 convention. A block whose
+enclosing activation has already exited is a **dead block**; a `^` inside it
+that fires after that point signals an error (`badBlockActivation`).
 
-**Ego stance — adopt.** Same block syntax, same `value`/`value:With:`
-activation, same `^` non-local-return semantics, same dead-block error.
+**Ego stance — adapt.** Same block syntax, same `value`/`value:With:`
+activation, same `^` non-local-return semantics. Narrower than classic
+Smalltalk-80's blanket "sending `value` to a dead block is always an error":
+Smalltalk-80 stack-allocates method contexts, so a dead block's captured
+state is genuinely gone once the context is popped/reused. Ego's `Env` is
+always heap-allocated and GC-tracked, so a dead block that never executes
+`^` remains safe to invoke indefinitely — required for the standard
+"closure factory" pattern (a method returning a block that mutates a var
+slot it closed over). Only an actual `^` targeting a dead activation is an
+error; see `rs-treewalk-impl.md`'s block-activation section.
 
 ---
 
@@ -416,8 +423,11 @@ are implemented in `treewalk/src/parser.rs` (`parse_binary`,
 implemented at substage 1.9 — see the ROADMAP entry for details; the tight
 (no-whitespace) `.` is resolved at the lexer level (`Token::ResendDot` in
 `lexer.rs`), not via lookahead in the parser. Implicit-receiver binary/
-keyword sends are still documented but not implemented — deferred to a
-later substage.
+keyword sends were implemented at substage 1.10, once block bodies started
+needing them (`count: count + 1` inside a block, mutating an enclosing
+object's var slot) — see `rs-treewalk-impl.md`'s "Implicit-receiver
+binary/keyword sends" section (`parse_keyword`/`parse_binary` in
+`parser.rs`).
 
 Built-in numeric/string prototypes give their instances a parent slot named
 literally `"parent*"` (asterisk included), which is not a producible

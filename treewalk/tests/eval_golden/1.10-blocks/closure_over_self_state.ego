@@ -1,0 +1,10 @@
+(| count <- 0.
+   inc = ( [ count: count + 1. count ] ).
+   b <- 0.
+   run = (
+       b: inc.
+       b value.
+       b value.
+       b value
+   )
+|) run

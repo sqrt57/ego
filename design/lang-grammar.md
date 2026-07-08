@@ -184,12 +184,28 @@ algorithm and worked examples.
             | float_lit
             | string_lit
             | identifier
+            | Assign
             | "self"
             | ResendExpr
             | "(" Expr ")"
             | ObjectLiteral
             | BlockLiteral
             .
+
+### Local assignment
+
+    Assign = identifier "<-" Expr .
+
+Reassigns a local variable (a block/method parameter or a `<-`-declared
+local) already reachable in the enclosing lexical scope — see
+[lang-spec.md §3](lang-spec.md#3-blocks). Distinct from `VarSlotDecl`, which
+uses the same `identifier "<-" Expr` shape but only inside a `| … |`
+slot-decl header and declares an object *slot* instead. Because `Assign` is
+recognized wherever a `Primary` is expected, `identifier "<-" Expr` written
+anywhere else — a body statement, a keyword-send argument, inside parens —
+reassigns rather than sends a `<-` message; sending `<-` as an ordinary
+binary selector is only reachable when the receiver isn't a bare identifier
+(`(a foo) <- b`), which no built-in object defines a method for.
 
 ### Resends
 

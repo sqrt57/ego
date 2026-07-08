@@ -9,7 +9,7 @@ use crate::env::{ActivationId, Env, env_new};
 use crate::error::{EgoError, SourceSpan};
 use crate::gc::alloc_with_gc;
 use crate::lexer::lex;
-use crate::object::{MethodDef, Object, ObjectKind, Slot, SlotKind};
+use crate::object::{BlockData, MethodDef, Object, ObjectKind, Slot, SlotKind};
 use crate::parser::parse;
 
 pub enum EgoSignal {
@@ -120,6 +120,22 @@ pub fn eval_send(
     interp: &mut Interpreter,
 ) -> EvalResult {
     if sel.starts_with('_') {
+        // Block activation (`_BlockValue`, `_BlockValue:`, `_BlockValue:Value:`)
+        // needs to recursively run AST via the evaluator, which a `PrimFn`
+        // cannot do — its signature only threads `Arena`/`RootSet`, not the
+        // full `Interpreter`. Intercept these selectors here instead of
+        // routing them through the primitive table.
+        if is_block_value_selector(sel) && matches!(&interp.arena.get(recv).kind, ObjectKind::Block(_)) {
+            let roots_base = interp.roots.stack_roots.len();
+            interp.roots.stack_roots.push(recv);
+            for &arg in args {
+                interp.roots.stack_roots.push(arg);
+            }
+            let result = eval_block_call(recv, args, span, interp);
+            interp.roots.stack_roots.truncate(roots_base);
+            return result;
+        }
+
         let prim_fn = match interp.prims.get(sel) {
             Some(f) => f,
             None => {
@@ -315,6 +331,75 @@ fn eval_method(
     }
 }
 
+fn is_block_value_selector(sel: &str) -> bool {
+    matches!(sel, "_BlockValue" | "_BlockValue:" | "_BlockValue:Value:")
+}
+
+/// Activates a block: binds `args` to the block's own param names and
+/// evaluates its locals' initializers, both directly into `captures` (the
+/// shared env from the point the block literal was evaluated — see
+/// `object::BlockData`), then runs the body with `self`/`resend_start`
+/// restored from capture and `activation.id` set to `home_id` so that `^`
+/// raises `NonLocalReturn(home_id, _)`, targeting the enclosing method's
+/// activation rather than this call.
+///
+/// Unlike `eval_method`, this never converts a matching `NonLocalReturn` to
+/// `Ok` — that catch belongs solely to the `eval_method` frame whose own id
+/// equals `home_id`. It only guards against a `^` whose target has already
+/// exited (a dead block, `badBlockActivation` in lang-spec.md's error
+/// table), checked lazily here rather than eagerly on every `value` send:
+/// ego's `Env` is heap-allocated and GC-tracked, so invoking a block whose
+/// home method already returned is safe as long as it never actually
+/// executes `^`.
+fn eval_block_call(block_id: ObjectId, args: &[ObjectId], span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    let block: BlockData = match &interp.arena.get(block_id).kind {
+        ObjectKind::Block(b) => (**b).clone(),
+        _ => return Err(EgoSignal::Err(EgoError::new(span.clone(), "not a block".into()))),
+    };
+
+    if args.len() != block.lit.params.len() {
+        return Err(EgoSignal::Err(EgoError::new(
+            span.clone(),
+            format!(
+                "wrong number of arguments: expected {}, got {}",
+                block.lit.params.len(),
+                args.len()
+            ),
+        )));
+    }
+
+    for (param, &arg) in block.lit.params.iter().zip(args.iter()) {
+        block.captures.borrow_mut().insert(param.clone(), arg);
+    }
+
+    let activation = Activation {
+        id: block.home_id,
+        self_obj: block.captured_self,
+        resend_start: block.captured_resend,
+        env: block.captures.clone(),
+    };
+
+    for local in &block.lit.locals {
+        let val = eval_expr(&local.init, &activation, interp)?;
+        activation.env.borrow_mut().insert(local.name.clone(), val);
+    }
+
+    match eval_body(&block.lit.body, &activation, interp) {
+        Ok(v) => Ok(v),
+        Err(EgoSignal::NonLocalReturn(target, val)) => {
+            if interp.live_activations.contains(&target) {
+                Err(EgoSignal::NonLocalReturn(target, val))
+            } else {
+                Err(EgoSignal::Err(EgoError::new(
+                    span.clone(),
+                    "non-local return to a dead activation (badBlockActivation)".into(),
+                )))
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn eval_body(stmts: &[Stmt], activation: &Activation, interp: &mut Interpreter) -> EvalResult {
     let mut last = interp.roots.nil_id;
     for stmt in stmts {
@@ -398,6 +483,12 @@ pub fn eval_expr(
         }
 
         ExprKind::Self_ => Ok(activation.self_obj),
+
+        ExprKind::Assign { name, value } => {
+            let val = eval_expr(value, activation, interp)?;
+            activation.env.borrow_mut().insert(name.clone(), val);
+            Ok(val)
+        }
 
         ExprKind::ResendSend { target, sel, args } => {
             let roots_base = interp.roots.stack_roots.len();
@@ -501,10 +592,26 @@ pub fn eval_expr(
             Ok(last)
         }
 
-        ExprKind::Block(_) => Err(EgoSignal::Err(EgoError::new(
-            expr.span.clone(),
-            "blocks not yet implemented".into(),
-        ))),
+        ExprKind::Block(lit) => {
+            let block_data = BlockData {
+                lit: lit.clone(),
+                home_id: activation.id,
+                captured_self: activation.self_obj,
+                captured_resend: activation.resend_start,
+                captures: activation.env.clone(),
+            };
+            let id = alloc_with_gc(
+                &mut interp.arena,
+                &interp.roots,
+                Object::new(ObjectKind::Block(Box::new(block_data))),
+            );
+            interp.arena.get_mut(id).slots.push(Slot {
+                name: "parent*".to_string(),
+                kind: SlotKind::Parent,
+                value: interp.roots.block_proto,
+            });
+            Ok(id)
+        }
 
         ExprKind::Object(obj) => eval_object_lit(obj, activation, interp),
     }

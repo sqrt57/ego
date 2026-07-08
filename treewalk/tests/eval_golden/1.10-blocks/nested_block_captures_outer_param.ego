@@ -1,0 +1,1 @@
+[| :x | [| :y | x + y] value: 10] value: 5

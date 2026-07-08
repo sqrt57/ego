@@ -1,11 +1,22 @@
 use std::rc::Rc;
 use treewalk::arena::{Arena, NULL_ID};
+use treewalk::ast::BlockLit;
 use treewalk::env::{env_new, ActivationId};
+use treewalk::error::SourceSpan;
 use treewalk::gc::{collect, RootSet};
 use treewalk::object::{BlockData, Object, ObjectKind, Slot, SlotKind};
 
 fn plain() -> Object {
     Object::new(ObjectKind::Plain)
+}
+
+fn empty_block_lit() -> Rc<BlockLit> {
+    Rc::new(BlockLit {
+        params: vec![],
+        locals: vec![],
+        body: vec![],
+        span: SourceSpan::new(Rc::new(String::new()), 0, 0),
+    })
 }
 
 fn roots() -> RootSet {
@@ -125,9 +136,7 @@ fn block_captured_self_kept_live() {
 
     let self_obj = arena.alloc(Object::new(ObjectKind::Integer(42)));
     let block = Object::new(ObjectKind::Block(Box::new(BlockData {
-        params: vec![],
-        locals: vec![],
-        body: Rc::new(vec![]),
+        lit: empty_block_lit(),
         home_id: ActivationId(0),
         captured_self: self_obj,
         captured_resend: None,
@@ -148,9 +157,7 @@ fn block_captured_resend_kept_live() {
 
     let resend_obj = arena.alloc(plain());
     let block = Object::new(ObjectKind::Block(Box::new(BlockData {
-        params: vec![],
-        locals: vec![],
-        body: Rc::new(vec![]),
+        lit: empty_block_lit(),
         home_id: ActivationId(0),
         captured_self: NULL_ID,
         captured_resend: Some(resend_obj),
@@ -173,9 +180,7 @@ fn block_env_captures_kept_live() {
     env.borrow_mut().insert("x".into(), val);
 
     let block = Object::new(ObjectKind::Block(Box::new(BlockData {
-        params: vec![],
-        locals: vec![],
-        body: Rc::new(vec![]),
+        lit: empty_block_lit(),
         home_id: ActivationId(0),
         captured_self: NULL_ID,
         captured_resend: None,
@@ -199,9 +204,7 @@ fn block_env_unreachable_if_block_unreachable() {
     env.borrow_mut().insert("x".into(), val);
 
     let block = Object::new(ObjectKind::Block(Box::new(BlockData {
-        params: vec![],
-        locals: vec![],
-        body: Rc::new(vec![]),
+        lit: empty_block_lit(),
         home_id: ActivationId(0),
         captured_self: NULL_ID,
         captured_resend: None,

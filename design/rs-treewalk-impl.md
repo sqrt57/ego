@@ -134,9 +134,7 @@ complications.
 
 ```rust
 pub struct BlockData {
-    pub params:          Vec<String>,
-    pub locals:          Vec<(String, SlotKind)>,   // SlotKind ∈ {Data, Var}
-    pub body:            Rc<Vec<AstNode>>,
+    pub lit:             Rc<BlockLit>,   // params, locals, body, span — shared, not re-cloned per activation
     pub home_id:         ActivationId,   // for non-local ^ return
     pub captured_self:   ObjectId,
     pub captured_resend: Option<ObjectId>,
@@ -147,7 +145,48 @@ pub struct BlockData {
 Blocks close over `self`, `resend` (if inside a method), and all bindings
 visible in the enclosing scope at the point the block literal is evaluated.
 `home_id` is the `ActivationId` of the enclosing method; `^` inside the block
-targets this activation.
+targets this activation. `lit` holds the parsed `BlockLit` (params, locals,
+body) by `Rc`, so creating a `BlockData` each time the literal expression is
+evaluated (e.g. inside a loop) only bumps a refcount, not a deep AST clone.
+
+Block *activation* (sending `value`/`value:`/`value:With:`) binds params and
+evaluates locals' initializers directly into `captures` — the same shared
+`Env`, not a fresh child frame — then runs the body with a temporary
+`Activation` whose `id` is set to `home_id` (so a `^` inside raises
+`NonLocalReturn(home_id, _)`) and whose `self_obj`/`resend_start` are
+restored from `captured_self`/`captured_resend`. Unlike `eval_method`, this
+call never catches a `NonLocalReturn` whose target equals its own id — that
+conversion-to-`Ok` belongs solely to the real `eval_method` frame further up
+the Rust call stack. It only guards the dead-block case: if the `^` target is
+no longer in the live-activation set, it converts to a fatal error
+(`badBlockActivation`, lang-spec.md's error table) right at the block-call
+site, rather than letting a raw `NonLocalReturn` escape frames that don't
+know how to handle it.
+
+This check is intentionally *lazy* — performed only when a `^` actually
+fires and turns out to target a dead activation — not eager on every `value`
+send. Self-notes.md §5 states the Smalltalk-80 rule more broadly ("sending
+`value` to a dead block signals an error"), but that rule exists because
+classic Smalltalk-80 stack-allocates method contexts, which become unsafe to
+reference once popped. Ego's `Env` is always heap-allocated (`Rc<RefCell<...>>`)
+and GC-tracked via `RootSet::activation_envs`/the `Block` object's own
+`captures` field, so a block that never executes `^` remains perfectly safe
+to invoke long after its creating method returned — the standard "closure
+factory" pattern (a method returning a block that mutates a var slot it
+closed over) depends on this. lang-spec.md's own error table agrees, scoping
+`badBlockActivation` specifically to "a non-local `^` return targets an
+already-returned method activation," not to `value` in general.
+
+Because `_BlockValue`/`_BlockValue:`/`_BlockValue:Value:` must recursively
+invoke the evaluator (`eval_body`) rather than perform a self-contained
+computation, they cannot be ordinary `PrimFn`s — that type only threads
+`Arena`/`RootSet`, not the full `Interpreter`. `eval_send` intercepts these
+three selectors directly (checking the receiver is `ObjectKind::Block`)
+before falling through to the primitive table, rooting `recv`/`args` the
+same way the primitive-dispatch path already does. `boot.ego`'s `value`/
+`value:`/`value:With:` methods on `blockProto`'s trait forward to them
+exactly like `+` forwards to `_IntAdd:` — the interception is invisible to
+ego-level code.
 
 ---
 
@@ -472,6 +511,71 @@ Step 2 is the correct Self/ego semantic: inside a method body, all bare names
 are unary messages to `self`. At the top level `self_obj` is the lobby, so
 lobby data slots (`nil`, `true`, `false`, the proto objects, etc.) are found by
 the same path without special-casing.
+
+### Local variable assignment (`<-` outside a slot-decl header)
+
+`(| x <- 1 |)` declares an object *slot* named `x`, which is always mutated
+via its auto-generated `x:` setter message (see below) — never via `<-`
+again. But block locals and, by extension, any bare name already bound in
+the current `env` (params, block locals) have no slot and thus no setter to
+send. Substage 1.10's canonical block example needs exactly this:
+
+```
+[| :x. sum <- 0 | sum <- sum + x. sum]
+```
+
+`sum <- sum + x` is a *body* statement, not a slot-decl header — `parse_slot_decl`/
+`parse_block_slots` only recognize `identifier "<-" expr` inside `| … |`.
+Outside that context, `parser.rs`'s `parse_primary_inner` recognizes the same
+token sequence (`Ident` immediately followed by `Binary("<-")`) wherever a
+primary is expected and produces a dedicated `ExprKind::Assign { name, value }`
+node instead of falling through to an ordinary `BinarySend` — `<-` as a
+message selector on a non-identifier receiver (`(a foo) <- b`) is unaffected,
+since the check only fires when the receiver token is a bare identifier.
+`value` is parsed via the same `parse_keyword()` entry point used for
+slot-decl values, so the RHS can be an arbitrary expression.
+
+`eval_expr` evaluates `Assign` by writing straight into `activation.env`
+(`env.borrow_mut().insert(name, val)`), unconditionally creating the binding
+if absent — no message dispatch, no fallback to a slot on `self`. This is
+also how a block's header locals get their *initial* binding: block
+activation (`eval_block_call`) evaluates each local's `init` expression and
+inserts the result into `captures` the exact same way, so declaration and
+later reassignment are the same primitive operation. Because `<-` only
+intercepts a bare-identifier LHS, and block/method env tables are otherwise
+untouched by ordinary message dispatch, this doesn't collide with the
+slot/setter mechanism described in "Var slots and auto-generated setters"
+below — that remains the only way to mutate a slot on an object.
+
+Known gap, not enforced: a `Data`-kind local (`sum = 0`, not `sum <- 0`) is
+*supposed* to read as a constant, matching the immutability object `Data`
+slots get by never having a setter generated. `Assign` doesn't check the
+originating `LocalKind`, so a `Data` local can currently be reassigned like a
+`Var` one. See `backlog.md`.
+
+### Implicit-receiver binary/keyword sends
+
+`min: 5` alone means `self min: 5`, and `+ 3` alone means `self + 3`
+(lang-spec.md §2; lang-grammar.md's `KeywordExpr`/`BinaryExpr` productions
+make the leading receiver optional for exactly this reason). This was
+flagged as implemented-for-unary-only when substage 1.8 revised the
+keyword-message grouping rules ("unary case already works via existing
+bare-identifier lookup... deferred to a later substage" — self-notes.md
+§11) and stayed unimplemented until substage 1.10 needed it: block bodies
+routinely mutate an enclosing object's var slot via an implicit-receiver
+setter send (`count: count + 1`, mirroring `i: i + 1` in lang-spec.md §7's
+`whileTrue:` example), and without it that pattern was a parse error.
+
+`parse_keyword`/`parse_binary` now check, before attempting to parse a
+receiver at all, whether the current token is a `Keyword`/`Binary` selector
+with nothing in front of it; if so they synthesize an `ExprKind::Self_` node
+as the receiver instead of calling into `parse_binary`/`parse_unary`
+(which have no primary case for a bare selector token and would otherwise
+fail with "expected expression"). The binary case excludes a `Binary("|")`
+when `stop_at_bar` is set, so an empty slot-decl value doesn't get
+misread as `self | …`. A bare `CapKeyword` still cannot start a message
+(only a plain lowercase `Keyword` triggers the implicit-`self` case), so the
+"first keyword part must be lowercase" grouping rule (§2) is preserved.
 
 ### Method lookup
 

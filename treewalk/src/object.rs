@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::arena::ObjectId;
-use crate::ast::Stmt;
+use crate::ast::{BlockLit, Stmt};
 use crate::env::{ActivationId, Env};
 use crate::error::SourceSpan;
 
@@ -55,11 +55,9 @@ pub struct MethodDef {
     pub source: SourceSpan,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockData {
-    pub params: Vec<String>,
-    pub locals: Vec<(String, SlotKind)>,
-    pub body: Rc<Vec<Stmt>>,
+    pub lit: Rc<BlockLit>,
     pub home_id: ActivationId,
     pub captured_self: ObjectId,
     pub captured_resend: Option<ObjectId>,

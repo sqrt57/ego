@@ -66,6 +66,32 @@ fn make_binary_prim_method(prim_sel: &str, arena: &mut Arena, roots: &RootSet) -
     alloc_with_gc(arena, roots, Object::new(ObjectKind::Method(method_def)))
 }
 
+/// A two-argument method (backs `value:With:`) whose body forwards `self`
+/// and both arguments to a primitive.
+fn make_two_arg_prim_method(prim_sel: &str, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let span = bs_span();
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Box::new(Expr {
+            kind: ExprKind::KeywordSend {
+                recv: Box::new(Expr { kind: ExprKind::Self_, span: span.clone() }),
+                sel: prim_sel.to_string(),
+                args: vec![
+                    Expr { kind: ExprKind::Ident("a".to_string()), span: span.clone() },
+                    Expr { kind: ExprKind::Ident("b".to_string()), span: span.clone() },
+                ],
+            },
+            span: span.clone(),
+        })),
+        span: span.clone(),
+    }];
+    let method_def = Rc::new(MethodDef {
+        params: vec!["a".to_string(), "b".to_string()],
+        body,
+        source: span,
+    });
+    alloc_with_gc(arena, roots, Object::new(ObjectKind::Method(method_def)))
+}
+
 fn make_const_string_method(s: &str, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let span = bs_span();
     let body = vec![Stmt {
@@ -170,6 +196,20 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
         value: float_trait,
+    });
+
+    let value_method = make_unary_prim_method("_BlockValue", &mut arena, &roots);
+    let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);
+    let value_2_method = make_two_arg_prim_method("_BlockValue:Value:", &mut arena, &roots);
+    let mut block_trait_obj = Object::new(ObjectKind::Plain);
+    block_trait_obj.slots.push(Slot { name: "value".to_string(), kind: SlotKind::Method, value: value_method });
+    block_trait_obj.slots.push(Slot { name: "value:".to_string(), kind: SlotKind::Method, value: value_1_method });
+    block_trait_obj.slots.push(Slot { name: "value:With:".to_string(), kind: SlotKind::Method, value: value_2_method });
+    let block_trait = alloc_with_gc(&mut arena, &roots, block_trait_obj);
+    arena.get_mut(block_proto).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: block_trait,
     });
 
     let true_print = make_const_string_method("true", &mut arena, &roots);

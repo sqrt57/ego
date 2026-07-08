@@ -69,6 +69,11 @@ fn golden_1_9_parent_resend() {
     run_golden_dir("tests/eval_golden/1.9-parent-resend");
 }
 
+#[test]
+fn golden_1_10_blocks() {
+    run_golden_dir("tests/eval_golden/1.10-blocks");
+}
+
 fn eval_err(source: &str) -> String {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, "<test>", &mut interp) {
@@ -127,4 +132,21 @@ fn directed_resend_to_unknown_parent_name_is_fatal() {
 fn resend_outside_a_method_is_fatal() {
     let msg = eval_err("resend.printString");
     assert!(msg.contains("resend"), "got: {msg}");
+}
+
+#[test]
+fn dead_block_non_local_return_is_fatal() {
+    let msg = eval_err(
+        "(| stash <- 0. \
+            makeBlock = ( stash: [^ 1]. 2 ). \
+            run = ( makeBlock. stash value ) \
+         |) run",
+    );
+    assert!(msg.contains("dead activation"), "got: {msg}");
+}
+
+#[test]
+fn wrong_arg_count_to_block_is_fatal() {
+    let msg = eval_err("[| :x | x] value");
+    assert!(msg.contains("expected 1, got 0"), "got: {msg}");
 }

@@ -38,6 +38,10 @@ pub enum ExprKind {
     // Variables
     Ident(String),
     Self_,
+    // `name <- expr` outside a slot-decl header: binds/rebinds `name` in the
+    // enclosing activation's env directly, bypassing message dispatch. Only
+    // recognized when the LHS is a bare identifier (see parser.rs).
+    Assign { name: String, value: Box<Expr> },
 
     // Message sends
     UnarySend  { recv: Box<Expr>, sel: String },
@@ -52,7 +56,7 @@ pub enum ExprKind {
     Cascade { recv: Box<Expr>, msgs: Vec<CascadeMsg> },
 
     // Compound literals
-    Block(Box<BlockLit>),
+    Block(Rc<BlockLit>),
     Object(Box<ObjectLit>),
 }
 

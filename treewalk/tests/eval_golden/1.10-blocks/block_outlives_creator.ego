@@ -1,0 +1,5 @@
+(| count <- 10.
+   stash <- 0.
+   makeBlock = ( stash: [ count: count + 1. count ]. 0 ).
+   run = ( makeBlock. stash value )
+|) run

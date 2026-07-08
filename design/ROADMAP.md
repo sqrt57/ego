@@ -134,7 +134,7 @@ continuing lookup past the current method.
 Spec: [§ Objects and Slots](lang-spec.md#1-objects-and-slots),
 [§ Messages](lang-spec.md#2-messages).
 
-### Substage 1.10 — Evaluator: blocks
+### Substage 1.10 — Evaluator: blocks ✓
 
 Block literals, closure capture over enclosing scope, `value`/`value:` family,
 `^` non-local return.

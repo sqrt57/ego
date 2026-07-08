@@ -51,6 +51,8 @@ fn sk(k: ExprKind) -> ExprKind {
     match k {
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_)
         | ExprKind::Ident(_) | ExprKind::Self_ => k,
+        ExprKind::Assign { name, value } =>
+            ExprKind::Assign { name, value: Box::new(se(*value)) },
         ExprKind::UnarySend { recv, sel } =>
             ExprKind::UnarySend { recv: Box::new(se(*recv)), sel },
         ExprKind::BinarySend { recv, sel, arg } =>
@@ -61,7 +63,7 @@ fn sk(k: ExprKind) -> ExprKind {
             ExprKind::ResendSend { target, sel, args: args.into_iter().map(se).collect() },
         ExprKind::Cascade { recv, msgs } =>
             ExprKind::Cascade { recv: Box::new(se(*recv)), msgs: msgs.into_iter().map(scm).collect() },
-        ExprKind::Block(b)  => ExprKind::Block(Box::new(sb(*b))),
+        ExprKind::Block(b)  => ExprKind::Block(Rc::new(sb((*b).clone()))),
         ExprKind::Object(o) => ExprKind::Object(Box::new(so(*o))),
     }
 }
@@ -580,7 +582,7 @@ fn cascade_no_leading_send() {
 fn block_empty() {
     assert_eq!(
         expr("[]"),
-        ExprKind::Block(Box::new(BlockLit { params: vec![], locals: vec![], body: vec![], span: ds() }))
+        ExprKind::Block(Rc::new(BlockLit { params: vec![], locals: vec![], body: vec![], span: ds() }))
     );
 }
 
@@ -588,7 +590,7 @@ fn block_empty() {
 fn block_body_only() {
     assert_eq!(
         expr("[1 + 2]"),
-        ExprKind::Block(Box::new(BlockLit {
+        ExprKind::Block(Rc::new(BlockLit {
             params: vec![],
             locals: vec![],
             body: vec![es(StmtKind::Expr(Box::new(ex(ExprKind::BinarySend {
@@ -606,7 +608,7 @@ fn block_with_param() {
     // [| :x | x + 1]
     assert_eq!(
         expr("[| :x | x + 1]"),
-        ExprKind::Block(Box::new(BlockLit {
+        ExprKind::Block(Rc::new(BlockLit {
             params: vec!["x".into()],
             locals: vec![],
             body: vec![es(StmtKind::Expr(Box::new(ex(ExprKind::BinarySend {
@@ -624,7 +626,7 @@ fn block_with_data_local() {
     // [| x = 0. | x]
     assert_eq!(
         expr("[| x = 0. | x]"),
-        ExprKind::Block(Box::new(BlockLit {
+        ExprKind::Block(Rc::new(BlockLit {
             params: vec![],
             locals: vec![BlockLocal { name: "x".into(), kind: LocalKind::Data, init: ex(ExprKind::Int(0)) }],
             body: vec![es(StmtKind::Expr(Box::new(ex(ExprKind::Ident("x".into())))))],
@@ -638,7 +640,7 @@ fn block_with_var_local() {
     // [| x <- 0. | x]
     assert_eq!(
         expr("[| x <- 0. | x]"),
-        ExprKind::Block(Box::new(BlockLit {
+        ExprKind::Block(Rc::new(BlockLit {
             params: vec![],
             locals: vec![BlockLocal { name: "x".into(), kind: LocalKind::Var, init: ex(ExprKind::Int(0)) }],
             body: vec![es(StmtKind::Expr(Box::new(ex(ExprKind::Ident("x".into())))))],

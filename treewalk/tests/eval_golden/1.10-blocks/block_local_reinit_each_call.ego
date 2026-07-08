@@ -1,0 +1,7 @@
+(| adder <- 0.
+   run = (
+       adder: [| :x. sum <- 0 | sum <- sum + x. sum].
+       adder value: 5.
+       adder value: 100
+   )
+|) run
