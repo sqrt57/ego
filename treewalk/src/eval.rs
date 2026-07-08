@@ -136,6 +136,32 @@ pub fn eval_send(
             return result;
         }
 
+        // `whileTrue:` and the boolean control-flow selectors all need to
+        // send `value` to block arguments, which (like block activation
+        // above) requires recursing into the evaluator rather than a bare
+        // `PrimFn`. Intercepted here for the same reason.
+        if sel == "_BlockWhileTrue:" {
+            let roots_base = interp.roots.stack_roots.len();
+            interp.roots.stack_roots.push(recv);
+            for &arg in args {
+                interp.roots.stack_roots.push(arg);
+            }
+            let result = eval_block_while_true(recv, args[0], span, interp);
+            interp.roots.stack_roots.truncate(roots_base);
+            return result;
+        }
+
+        if is_bool_control_selector(sel) {
+            let roots_base = interp.roots.stack_roots.len();
+            interp.roots.stack_roots.push(recv);
+            for &arg in args {
+                interp.roots.stack_roots.push(arg);
+            }
+            let result = eval_bool_control(recv, sel, args, span, interp);
+            interp.roots.stack_roots.truncate(roots_base);
+            return result;
+        }
+
         let prim_fn = match interp.prims.get(sel) {
             Some(f) => f,
             None => {
@@ -333,6 +359,80 @@ fn eval_method(
 
 fn is_block_value_selector(sel: &str) -> bool {
     matches!(sel, "_BlockValue" | "_BlockValue:" | "_BlockValue:Value:")
+}
+
+/// Repeatedly sends `value` to the condition block (`recv`) and, while it
+/// answers `true`, to the body block (`body`) — the ordinary keyword method
+/// `whileTrue:` on blocks (lang-spec.md §7). Answers `nil` once the
+/// condition answers `false`; anything else is a fatal error, since ego has
+/// no separate `Boolean` type to coerce against.
+fn eval_block_while_true(recv: ObjectId, body: ObjectId, span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    loop {
+        let cond = eval_send(recv, "value", &[], span, interp)?;
+        if cond == interp.roots.true_id {
+            eval_send(body, "value", &[], span, interp)?;
+        } else if cond == interp.roots.false_id {
+            return Ok(interp.roots.nil_id);
+        } else {
+            return Err(EgoSignal::Err(EgoError::new(
+                span.clone(),
+                "whileTrue: condition block must evaluate to true or false".into(),
+            )));
+        }
+    }
+}
+
+fn is_bool_control_selector(sel: &str) -> bool {
+    matches!(
+        sel,
+        "_BoolIfTrue:False:" | "_BoolIfTrue:" | "_BoolIfFalse:" | "_BoolAnd:" | "_BoolOr:" | "_BoolNot"
+    )
+}
+
+/// Backs `ifTrue:False:`, `ifTrue:`, `ifFalse:`, `and:`, `or:`, and `not` on
+/// the `true`/`false` prototypes (lang-spec.md §7-8). Branches on `recv`'s
+/// identity (there's no separate `Boolean` tag — `true`/`false` are the only
+/// two instances) and sends `value` to whichever block argument was chosen;
+/// the untaken branch's block is never invoked, giving `ifTrue:False:` its
+/// required lazy-evaluation semantics.
+fn eval_bool_control(recv: ObjectId, sel: &str, args: &[ObjectId], span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    let is_true = recv == interp.roots.true_id;
+    match sel {
+        "_BoolIfTrue:False:" => {
+            let branch = if is_true { args[0] } else { args[1] };
+            eval_send(branch, "value", &[], span, interp)
+        }
+        "_BoolIfTrue:" => {
+            if is_true {
+                eval_send(args[0], "value", &[], span, interp)
+            } else {
+                Ok(interp.roots.nil_id)
+            }
+        }
+        "_BoolIfFalse:" => {
+            if is_true {
+                Ok(interp.roots.nil_id)
+            } else {
+                eval_send(args[0], "value", &[], span, interp)
+            }
+        }
+        "_BoolAnd:" => {
+            if is_true {
+                eval_send(args[0], "value", &[], span, interp)
+            } else {
+                Ok(recv)
+            }
+        }
+        "_BoolOr:" => {
+            if is_true {
+                Ok(recv)
+            } else {
+                eval_send(args[0], "value", &[], span, interp)
+            }
+        }
+        "_BoolNot" => Ok(if is_true { interp.roots.false_id } else { interp.roots.true_id }),
+        _ => unreachable!("is_bool_control_selector gates this match"),
+    }
 }
 
 /// Activates a block: binds `args` to the block's own param names and

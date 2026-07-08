@@ -53,3 +53,62 @@ block *activation* (not just each block-literal evaluation) a fresh child
 frame that falls back to `captures` for names it doesn't own — a real `Env`
 redesign (today a flat `HashMap`, no parent-chain concept), out of scope
 unless a real recursive-block use case demands it.
+
+## Object-literal body statements are parsed but never evaluated
+
+`(| slots | body )` is real grammar — `parse_object_lit` (`parser.rs`) parses
+trailing statements after the slot section's closing `|` into
+`ObjectLit.body`, and `parser_tests.rs` has passing parser-level tests for
+it (`object_with_body`, `object_no_slots_with_body`). But `eval_object_lit`/
+`eval_object_slots` (`eval.rs`) only ever construct the new object's slots
+from `obj.slots` — `obj.body` is read nowhere on the eval side, so any
+statements written there are silently discarded; the object literal's value
+is always the bare new object, never a body statement's result. Found while
+writing substage 1.11 golden tests: `(| i <- 0 | someExpr. i)` looks like it
+should run `someExpr` then answer `i`, but actually just answers a fresh
+object with an `i` slot, full stop. Not fixed — no golden test currently
+depends on evaluating an object literal's body (existing tests always put
+"doit" logic in a method slot and send it after the closing paren, e.g.
+`(| run = ( ... ) |) run`), and it's unclear from `lang-spec.md` alone what
+the body's role is even meant to be (Self doesn't have this construct in
+quite this shape — self-notes.md doesn't cover it). Needs a spec decision
+before fixing: what should the literal's value be when a body is present,
+and does the body run with `self` bound to the new object or the enclosing
+one?
+
+## Bare `true`/`false`/`nil` (and other lobby bindings) are unreachable from inside most method bodies
+
+`ExprKind::Ident` (`eval.rs`) resolves a bare identifier not found in the
+current activation's env via `eval_send(activation.self_obj, name, ...)` —
+an implicit unary send to `self`. The comment there already flags the
+consequence: "At top-level `self_obj` is the lobby, so lobby slots are
+found here too" — meaning this only works by coincidence at the top level.
+Inside an ordinary method or block, `self` is the receiver, which has no
+parent slot pointing at the lobby (`eval_object_slots` never gives new
+objects an implicit parent), so a bare `true`/`false`/`nil`/`stdout`/etc.
+reference fails with "message not understood" unless the enclosing object
+happens to have its own same-named slot. `self-notes.md` §6 states the
+intended stance plainly — "all names resolve through [the lobby] or the
+receiver" — but only the receiver half is implemented.
+
+Found while writing substage 1.11's `whileTrue:` golden tests: a condition
+block `[false]` written *inside* a method failed with "message not
+understood: false"; worked around by writing `[1 > 3]` instead (obtains the
+same boolean via a comparison primitive, sidestepping identifier lookup
+entirely) — matches the pattern every earlier substage's golden tests
+already followed (booleans always came from comparisons, never a bare
+`true`/`false` token, which is presumably why this was never hit before
+1.11). Slot initializers evaluated in an *enclosing* activation (per the
+1.9 finding on object-literal slot values) are fine whenever that enclosing
+activation eventually bottoms out at the top level; it's specifically
+method/block bodies where `self` is a non-lobby-descended object that break.
+
+Not fixed — needs a design decision, not just a bug fix: should `Ident`
+fall back to sending to the lobby when the self-send fails (cheap, but
+silently changes what "message not understood" means for a genuinely
+unbound name)? Should every object literal get an implicit parent slot
+reaching the lobby (closer to Self's real universal-ancestor chain, but a
+bigger change touching `eval_object_slots` and possibly GC root-marking)?
+This will only get more pressing as later substages add `nil`-testing,
+exception prototypes, and mirrors, all of which are lobby bindings that
+method bodies will need to reach routinely.

@@ -201,16 +201,48 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let value_method = make_unary_prim_method("_BlockValue", &mut arena, &roots);
     let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);
     let value_2_method = make_two_arg_prim_method("_BlockValue:Value:", &mut arena, &roots);
+    let while_true_method = make_binary_prim_method("_BlockWhileTrue:", &mut arena, &roots);
     let mut block_trait_obj = Object::new(ObjectKind::Plain);
     block_trait_obj.slots.push(Slot { name: "value".to_string(), kind: SlotKind::Method, value: value_method });
     block_trait_obj.slots.push(Slot { name: "value:".to_string(), kind: SlotKind::Method, value: value_1_method });
     block_trait_obj.slots.push(Slot { name: "value:With:".to_string(), kind: SlotKind::Method, value: value_2_method });
+    block_trait_obj.slots.push(Slot { name: "whileTrue:".to_string(), kind: SlotKind::Method, value: while_true_method });
     let block_trait = alloc_with_gc(&mut arena, &roots, block_trait_obj);
     arena.get_mut(block_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
         value: block_trait,
     });
+
+    // Wire `true`/`false` control-flow methods via a shared trait: the
+    // method bodies are identical for both singletons (forward self and any
+    // block args to a `_Bool...` pseudo-primitive), and `eval_bool_control`
+    // branches on which singleton `self` actually is.
+    let bool_not = make_unary_prim_method("_BoolNot", &mut arena, &roots);
+    let bool_and = make_binary_prim_method("_BoolAnd:", &mut arena, &roots);
+    let bool_or = make_binary_prim_method("_BoolOr:", &mut arena, &roots);
+    let bool_if_true = make_binary_prim_method("_BoolIfTrue:", &mut arena, &roots);
+    let bool_if_false = make_binary_prim_method("_BoolIfFalse:", &mut arena, &roots);
+    let bool_if_true_false = make_two_arg_prim_method("_BoolIfTrue:False:", &mut arena, &roots);
+    let mut bool_trait_obj = Object::new(ObjectKind::Plain);
+    for (name, method_obj) in [
+        ("not", bool_not),
+        ("and:", bool_and),
+        ("or:", bool_or),
+        ("ifTrue:", bool_if_true),
+        ("ifFalse:", bool_if_false),
+        ("ifTrue:False:", bool_if_true_false),
+    ] {
+        bool_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
+    let bool_trait = alloc_with_gc(&mut arena, &roots, bool_trait_obj);
+    for proto in [true_id, false_id] {
+        arena.get_mut(proto).slots.push(Slot {
+            name: "parent*".to_string(),
+            kind: SlotKind::Parent,
+            value: bool_trait,
+        });
+    }
 
     let true_print = make_const_string_method("true", &mut arena, &roots);
     arena.get_mut(true_id).slots.push(Slot {

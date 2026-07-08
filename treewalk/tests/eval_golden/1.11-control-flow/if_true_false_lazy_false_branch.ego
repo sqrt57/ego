@@ -1,0 +1,1 @@
+false ifTrue: [1 / 0] False: [2]

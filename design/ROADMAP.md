@@ -141,7 +141,7 @@ Block literals, closure capture over enclosing scope, `value`/`value:` family,
 
 Spec: [§ Blocks](lang-spec.md#3-blocks).
 
-### Substage 1.11 — Evaluator: booleans and control flow
+### Substage 1.11 — Evaluator: booleans and control flow ✓
 
 `true`/`false` prototypes, `ifTrue:False:`, `and:`, `or:`, `not`,
 `whileTrue:` — no special syntax anywhere in the pipeline.

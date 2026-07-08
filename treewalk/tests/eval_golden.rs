@@ -74,6 +74,11 @@ fn golden_1_10_blocks() {
     run_golden_dir("tests/eval_golden/1.10-blocks");
 }
 
+#[test]
+fn golden_1_11_control_flow() {
+    run_golden_dir("tests/eval_golden/1.11-control-flow");
+}
+
 fn eval_err(source: &str) -> String {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, "<test>", &mut interp) {
@@ -149,4 +154,10 @@ fn dead_block_non_local_return_is_fatal() {
 fn wrong_arg_count_to_block_is_fatal() {
     let msg = eval_err("[| :x | x] value");
     assert!(msg.contains("expected 1, got 0"), "got: {msg}");
+}
+
+#[test]
+fn while_true_condition_must_be_boolean_is_fatal() {
+    let msg = eval_err("[1] whileTrue: [1]");
+    assert!(msg.contains("true or false"), "got: {msg}");
 }

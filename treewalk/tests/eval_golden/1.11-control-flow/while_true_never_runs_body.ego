@@ -1,0 +1,1 @@
+(| ran <- false. run = ( [1 > 3] whileTrue: [ran: true. 1 / 0]. ran ) |) run
