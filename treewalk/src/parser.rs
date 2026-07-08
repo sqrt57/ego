@@ -291,9 +291,27 @@ impl<'t> Parser<'t> {
             Some(Token::Integer(n)) => { self.advance(); Ok(Expr { kind: ExprKind::Int(n),   span }) }
             Some(Token::Float(f))   => { self.advance(); Ok(Expr { kind: ExprKind::Float(f), span }) }
             Some(Token::Str(s))     => { self.advance(); Ok(Expr { kind: ExprKind::Str(s),   span }) }
-            Some(Token::Ident(s))   => { self.advance(); Ok(Expr { kind: ExprKind::Ident(s), span }) }
-            Some(Token::Self_)      => { self.advance(); Ok(Expr { kind: ExprKind::Self_,     span }) }
-            Some(Token::Resend)     => { self.advance(); Ok(Expr { kind: ExprKind::Resend,    span }) }
+            Some(Token::Ident(s)) => {
+                self.advance();
+                if self.peek() == Some(&Token::ResendDot) {
+                    self.advance();
+                    self.parse_resend_message(ResendTarget::Directed(s), span)
+                } else {
+                    Ok(Expr { kind: ExprKind::Ident(s), span })
+                }
+            }
+            Some(Token::Self_) => { self.advance(); Ok(Expr { kind: ExprKind::Self_, span }) }
+            Some(Token::Resend) => {
+                self.advance();
+                if self.peek() != Some(&Token::ResendDot) {
+                    return Err(self.err(
+                        self.span(),
+                        "'resend' must be followed immediately by '.' and a message, e.g. resend.foo",
+                    ));
+                }
+                self.advance();
+                self.parse_resend_message(ResendTarget::Undirected, span)
+            }
             Some(Token::LBrack)     => self.parse_block_lit(),
             Some(Token::LParen) => {
                 // ( | ... ) → object literal; ( expr ) → parenthesised expression
@@ -307,6 +325,50 @@ impl<'t> Parser<'t> {
                 }
             }
             _ => Err(self.err(span, "expected expression")),
+        }
+    }
+
+    // ── Resend ─────────────────────────────────────────────────────────────
+
+    /// Parses the `ResendMessage` following a `ResendTarget "."` already
+    /// consumed by the caller (either `resend.` or `identifier.`, with the
+    /// tightness already checked via `Token::ResendDot`).
+    fn parse_resend_message(
+        &mut self,
+        target: ResendTarget,
+        span: SourceSpan,
+    ) -> Result<Expr, EgoError> {
+        match self.peek().cloned() {
+            Some(Token::Ident(sel)) => {
+                self.advance();
+                Ok(Expr { kind: ExprKind::ResendSend { target, sel, args: vec![] }, span })
+            }
+            Some(Token::Binary(sel)) => {
+                self.advance();
+                let arg = self.parse_unary()?;
+                Ok(Expr { kind: ExprKind::ResendSend { target, sel, args: vec![arg] }, span })
+            }
+            Some(Token::Keyword(_)) | Some(Token::CapKeyword(_)) => {
+                // Unlike ordinary keyword sends, a resend message's parts
+                // simply concatenate — there's no nested-grouping ambiguity
+                // to resolve, since `resend.`/`name.` already delimits the
+                // start unambiguously. See lang-grammar.md's Resends section.
+                let mut sel = String::new();
+                let mut args = Vec::new();
+                loop {
+                    let kw = match self.advance().token.clone() {
+                        Token::Keyword(s) | Token::CapKeyword(s) => s,
+                        _ => unreachable!("loop guard ensures a keyword part here"),
+                    };
+                    sel.push_str(&kw);
+                    args.push(self.parse_binary()?);
+                    if !matches!(self.peek(), Some(Token::Keyword(_)) | Some(Token::CapKeyword(_))) {
+                        break;
+                    }
+                }
+                Ok(Expr { kind: ExprKind::ResendSend { target, sel, args }, span })
+            }
+            _ => Err(self.err(self.span(), "expected a message after resend '.'")),
         }
     }
 

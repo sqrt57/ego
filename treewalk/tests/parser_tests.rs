@@ -50,13 +50,15 @@ fn se(e: Expr) -> Expr {
 fn sk(k: ExprKind) -> ExprKind {
     match k {
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_)
-        | ExprKind::Ident(_) | ExprKind::Self_ | ExprKind::Resend => k,
+        | ExprKind::Ident(_) | ExprKind::Self_ => k,
         ExprKind::UnarySend { recv, sel } =>
             ExprKind::UnarySend { recv: Box::new(se(*recv)), sel },
         ExprKind::BinarySend { recv, sel, arg } =>
             ExprKind::BinarySend { recv: Box::new(se(*recv)), sel, arg: Box::new(se(*arg)) },
         ExprKind::KeywordSend { recv, sel, args } =>
             ExprKind::KeywordSend { recv: Box::new(se(*recv)), sel, args: args.into_iter().map(se).collect() },
+        ExprKind::ResendSend { target, sel, args } =>
+            ExprKind::ResendSend { target, sel, args: args.into_iter().map(se).collect() },
         ExprKind::Cascade { recv, msgs } =>
             ExprKind::Cascade { recv: Box::new(se(*recv)), msgs: msgs.into_iter().map(scm).collect() },
         ExprKind::Block(b)  => ExprKind::Block(Box::new(sb(*b))),
@@ -174,9 +176,85 @@ fn self_expr() {
     assert_eq!(expr("self"), ExprKind::Self_);
 }
 
+// ── Resend ─────────────────────────────────────────────────────────────────
+
 #[test]
-fn resend_expr() {
-    assert_eq!(expr("resend"), ExprKind::Resend);
+fn resend_unary() {
+    assert_eq!(
+        expr("resend.foo"),
+        ExprKind::ResendSend { target: ResendTarget::Undirected, sel: "foo".into(), args: vec![] }
+    );
+}
+
+#[test]
+fn resend_binary() {
+    assert_eq!(
+        expr("resend.+ 5"),
+        ExprKind::ResendSend {
+            target: ResendTarget::Undirected,
+            sel: "+".into(),
+            args: vec![ex(ExprKind::Int(5))],
+        }
+    );
+}
+
+#[test]
+fn resend_keyword() {
+    assert_eq!(
+        expr("resend.min: 17 Max: 23"),
+        ExprKind::ResendSend {
+            target: ResendTarget::Undirected,
+            sel: "min:Max:".into(),
+            args: vec![ex(ExprKind::Int(17)), ex(ExprKind::Int(23))],
+        }
+    );
+}
+
+#[test]
+fn directed_resend() {
+    assert_eq!(
+        expr("intParent.min: 17"),
+        ExprKind::ResendSend {
+            target: ResendTarget::Directed("intParent".into()),
+            sel: "min:".into(),
+            args: vec![ex(ExprKind::Int(17))],
+        }
+    );
+}
+
+#[test]
+fn resend_result_can_be_unary_chained() {
+    // resend.foo bar  →  (resend.foo) bar
+    let inner = ex(ExprKind::ResendSend {
+        target: ResendTarget::Undirected,
+        sel: "foo".into(),
+        args: vec![],
+    });
+    assert_eq!(
+        expr("resend.foo bar"),
+        ExprKind::UnarySend { recv: Box::new(inner), sel: "bar".into() }
+    );
+}
+
+#[test]
+fn bare_resend_is_an_error() {
+    let msg = parse_err("resend");
+    assert!(msg.contains("resend"), "got: {msg}");
+}
+
+#[test]
+fn resend_with_space_before_dot_is_an_error() {
+    // The dot only counts as a resend dot with no whitespace on either side;
+    // `resend .foo` lexes as [Resend, Dot, Ident], and a bare `resend` isn't
+    // a valid expression on its own.
+    let msg = parse_err("resend .foo");
+    assert!(msg.contains("resend"), "got: {msg}");
+}
+
+#[test]
+fn resend_dot_without_message_is_an_error() {
+    let msg = parse_err("resend.");
+    assert!(!msg.is_empty());
 }
 
 // ── Unary sends ────────────────────────────────────────────────────────────

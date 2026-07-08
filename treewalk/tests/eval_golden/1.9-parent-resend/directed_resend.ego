@@ -1,0 +1,4 @@
+(| a* = (| greet = ( 100 ) |).
+   b* = (| greet = ( 200 ) |).
+   greet = ( a.greet + b.greet )
+|) greet

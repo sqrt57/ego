@@ -246,6 +246,28 @@ fn punctuation(#[case] src: &str, #[case] tok: Token) {
     assert_eq!(tokens(src), vec![tok]);
 }
 
+// ── Resend dot ─────────────────────────────────────────────────────────────
+
+#[rstest]
+#[case("resend.foo",      vec![Token::Resend, Token::ResendDot, Token::Ident("foo".into())])]
+#[case("resend.+",        vec![Token::Resend, Token::ResendDot, Token::Binary("+".into())])]
+#[case("resend.min:",     vec![Token::Resend, Token::ResendDot, Token::Keyword("min:".into())])]
+#[case("intParent.foo",   vec![Token::Ident("intParent".into()), Token::ResendDot, Token::Ident("foo".into())])]
+fn tight_dot_is_resend_dot(#[case] src: &str, #[case] expected: Vec<Token>) {
+    assert_eq!(tokens(src), expected);
+}
+
+#[rstest]
+#[case("resend .foo",   vec![Token::Resend, Token::Dot, Token::Ident("foo".into())])]
+#[case("resend. foo",   vec![Token::Resend, Token::Dot, Token::Ident("foo".into())])]
+#[case("resend . foo",  vec![Token::Resend, Token::Dot, Token::Ident("foo".into())])]
+#[case("foo.",          vec![Token::Ident("foo".into()), Token::Dot])]
+#[case("42.foo",        vec![Token::Integer(42), Token::Dot, Token::Ident("foo".into())])]
+#[case("self.foo",      vec![Token::Self_, Token::Dot, Token::Ident("foo".into())])]
+fn loose_dot_stays_plain_dot(#[case] src: &str, #[case] expected: Vec<Token>) {
+    assert_eq!(tokens(src), expected);
+}
+
 // ── Comments ───────────────────────────────────────────────────────────────
 
 #[test]

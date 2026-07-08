@@ -126,7 +126,7 @@ rules (what happens when integer and float operands are mixed).
 Spec: [§ Messages](lang-spec.md#2-messages),
 [§ Built-in Objects](lang-spec.md#8-built-in-objects).
 
-### Substage 1.9 — Evaluator: parent slots and resend
+### Substage 1.9 — Evaluator: parent slots and resend ✓
 
 `*` parent slots, message lookup falling through to parents, `resend` for
 continuing lookup past the current method.

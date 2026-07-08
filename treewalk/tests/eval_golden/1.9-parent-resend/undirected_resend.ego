@@ -1,0 +1,1 @@
+(| parent* = (| greet = ( 1 ) |). greet = ( resend.greet + 10 ) |) greet

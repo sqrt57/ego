@@ -64,6 +64,11 @@ fn golden_1_8_arithmetic() {
     run_golden_dir("tests/eval_golden/1.8-arithmetic");
 }
 
+#[test]
+fn golden_1_9_parent_resend() {
+    run_golden_dir("tests/eval_golden/1.9-parent-resend");
+}
+
 fn eval_err(source: &str) -> String {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, "<test>", &mut interp) {
@@ -99,4 +104,27 @@ fn float_div_by_zero_is_fatal() {
 fn mixed_binary_operators_without_parens_is_a_parse_error() {
     let msg = eval_err("3 + 4 * 2");
     assert!(msg.contains('+') && msg.contains('*'), "got: {msg}");
+}
+
+#[test]
+fn ambiguous_parent_lookup_is_fatal() {
+    let msg = eval_err(
+        "(| a* = (| greet = ( 1 ) |). b* = (| greet = ( 2 ) |) |) greet",
+    );
+    assert!(msg.contains("ambiguous"), "got: {msg}");
+}
+
+#[test]
+fn directed_resend_to_unknown_parent_name_is_fatal() {
+    let msg = eval_err(
+        "(| parent* = (| greet = ( 1 ) |). \
+            greet = ( notAParent.greet ) |) greet",
+    );
+    assert!(msg.contains("notAParent"), "got: {msg}");
+}
+
+#[test]
+fn resend_outside_a_method_is_fatal() {
+    let msg = eval_err("resend.printString");
+    assert!(msg.contains("resend"), "got: {msg}");
 }

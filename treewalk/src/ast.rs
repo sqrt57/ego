@@ -38,13 +38,15 @@ pub enum ExprKind {
     // Variables
     Ident(String),
     Self_,
-    Resend,
 
     // Message sends
     UnarySend  { recv: Box<Expr>, sel: String },
     BinarySend { recv: Box<Expr>, sel: String, arg: Box<Expr> },
     // `sel` is the full assembled selector, e.g. "at:Put:"; `args` in part order.
     KeywordSend { recv: Box<Expr>, sel: String, args: Vec<Expr> },
+    // `resend.sel` (Undirected) or `parentName.sel` (Directed) — `sel`/`args`
+    // follow the same convention as `KeywordSend` for the keyword case.
+    ResendSend { target: ResendTarget, sel: String, args: Vec<Expr> },
 
     // Cascade: one receiver, one or more continuation messages
     Cascade { recv: Box<Expr>, msgs: Vec<CascadeMsg> },
@@ -52,6 +54,18 @@ pub enum ExprKind {
     // Compound literals
     Block(Box<BlockLit>),
     Object(Box<ObjectLit>),
+}
+
+// ── Resend targets ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResendTarget {
+    /// `resend.sel` — continue lookup from the parent chain of the object
+    /// that defined the currently executing method.
+    Undirected,
+    /// `name.sel` — continue lookup from one specific parent slot (named
+    /// `name`) of the object that defined the currently executing method.
+    Directed(String),
 }
 
 // ── Cascade messages ───────────────────────────────────────────────────────

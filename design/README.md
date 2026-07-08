@@ -16,6 +16,7 @@ Design docs, implementation plans, and working notes for the ego project.
 - **[ROADMAP.md](ROADMAP.md)** — stages, substages, and progress
 - **[rs-treewalk-impl.md](rs-treewalk-impl.md)** — Stage 1: Rust tree-walking interpreter design
 - **[gc-rationale.md](gc-rationale.md)** — GC algorithm decision record (mark-sweep vs alternatives)
+- **[backlog.md](backlog.md)** — open design questions and known small inconsistencies, deferred
 
 ## Reference
 

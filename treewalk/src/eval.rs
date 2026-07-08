@@ -1,7 +1,9 @@
 use std::rc::Rc;
 
 use crate::arena::ObjectId;
-use crate::ast::{CascadeMsg, Expr, ExprKind, ObjectLit, Program, SlotDeclKind, Stmt, StmtKind};
+use crate::ast::{
+    CascadeMsg, Expr, ExprKind, ObjectLit, Program, ResendTarget, SlotDeclKind, Stmt, StmtKind,
+};
 use crate::bootstrap::Interpreter;
 use crate::env::{ActivationId, Env, env_new};
 use crate::error::{EgoError, SourceSpan};
@@ -26,12 +28,16 @@ pub struct Activation {
 }
 
 enum SlotLookup {
-    Method(Rc<MethodDef>),
+    /// The object whose own slot list holds the method, plus the method
+    /// itself. The owner seeds `resend_start` for the activation this
+    /// method runs in.
+    Method(ObjectId, Rc<MethodDef>),
     Value(ObjectId),
     VarSetter(ObjectId, String),
 }
 
-fn lookup_slot(recv: ObjectId, sel: &str, interp: &Interpreter) -> Option<SlotLookup> {
+/// Ordinary top-down lookup: `id`'s own slots first, then its parents.
+fn lookup_slot(recv: ObjectId, sel: &str, interp: &Interpreter) -> Result<Option<SlotLookup>, String> {
     lookup_in(recv, sel, interp, &mut Vec::new())
 }
 
@@ -40,26 +46,35 @@ fn lookup_in(
     sel: &str,
     interp: &Interpreter,
     visited: &mut Vec<ObjectId>,
-) -> Option<SlotLookup> {
+) -> Result<Option<SlotLookup>, String> {
+    // Cycle guard: bails out only for an object already on *this* downward
+    // path (`visited` is pushed/popped, not accumulated across siblings) —
+    // see `lookup_in_parents` for why siblings must be free to revisit the
+    // same object, which is what makes diamond ambiguity detectable.
     if visited.contains(&id) {
-        return None;
+        return Ok(None);
     }
     visited.push(id);
 
     let obj = interp.arena.get(id);
     for slot in &obj.slots {
         if slot.name == sel {
-            return match &slot.kind {
+            let result = match &slot.kind {
                 SlotKind::Method => match &interp.arena.get(slot.value).kind {
-                    ObjectKind::Method(m) => Some(SlotLookup::Method(m.clone())),
-                    ObjectKind::VarSetter(name) => {
-                        Some(SlotLookup::VarSetter(id, name.clone()))
-                    }
+                    ObjectKind::Method(m) => Some(SlotLookup::Method(id, m.clone())),
+                    ObjectKind::VarSetter(name) => Some(SlotLookup::VarSetter(id, name.clone())),
                     _ => None,
                 },
                 SlotKind::Data | SlotKind::Var => Some(SlotLookup::Value(slot.value)),
-                _ => None,
+                // A parent slot is also an ordinary accessor: sending its
+                // name returns the parent object itself.
+                SlotKind::Parent => Some(SlotLookup::Value(slot.value)),
+                SlotKind::Arg => None,
             };
+            if result.is_some() {
+                visited.pop();
+                return Ok(result);
+            }
         }
     }
 
@@ -70,12 +85,31 @@ fn lookup_in(
         .map(|s| s.value)
         .collect();
 
-    for parent_id in parents {
-        if let Some(result) = lookup_in(parent_id, sel, interp, visited) {
-            return Some(result);
+    let result = lookup_in_parents(&parents, sel, interp, visited);
+    visited.pop();
+    result
+}
+
+/// Searches every parent in `parents` (depth-first, left to right) and
+/// signals ambiguity if more than one yields a result — see self-notes.md §4.
+fn lookup_in_parents(
+    parents: &[ObjectId],
+    sel: &str,
+    interp: &Interpreter,
+    visited: &mut Vec<ObjectId>,
+) -> Result<Option<SlotLookup>, String> {
+    let mut found: Option<SlotLookup> = None;
+    for &parent_id in parents {
+        if let Some(result) = lookup_in(parent_id, sel, interp, visited)? {
+            if found.is_some() {
+                return Err(format!(
+                    "message not understood: {sel} is ambiguous (reachable through multiple parents)"
+                ));
+            }
+            found = Some(result);
         }
     }
-    None
+    Ok(found)
 }
 
 pub fn eval_send(
@@ -107,12 +141,87 @@ pub fn eval_send(
         return result;
     }
 
-    match lookup_slot(recv, sel, interp) {
-        Some(SlotLookup::Method(method_def)) => {
-            eval_method(recv, None, method_def, args, span, interp)
+    let lookup = lookup_slot(recv, sel, interp);
+    invoke_lookup(lookup, recv, sel, args, span, interp)
+}
+
+/// Sends `sel` starting the lookup from the parent chain of the object that
+/// defined the currently executing method (`activation.resend_start`), per
+/// the resend syntax — undirected (`resend.sel`) searches all of that
+/// object's parents; directed (`name.sel`) is constrained to the one parent
+/// slot named `name` on that object. `self` is unchanged: it stays the
+/// original receiver throughout, never the resend target.
+fn eval_resend(
+    target: &ResendTarget,
+    sel: &str,
+    args: &[ObjectId],
+    activation: &Activation,
+    span: &SourceSpan,
+    interp: &mut Interpreter,
+) -> EvalResult {
+    let owner = match activation.resend_start {
+        Some(owner) => owner,
+        None => {
+            return Err(EgoSignal::Err(EgoError::new(
+                span.clone(),
+                "resend used outside a method".into(),
+            )));
         }
-        Some(SlotLookup::Value(val)) => Ok(val),
-        Some(SlotLookup::VarSetter(owner, name)) => {
+    };
+
+    let lookup = match target {
+        ResendTarget::Undirected => {
+            let parents: Vec<ObjectId> = interp
+                .arena
+                .get(owner)
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Parent)
+                .map(|s| s.value)
+                .collect();
+            lookup_in_parents(&parents, sel, interp, &mut Vec::new())
+        }
+        ResendTarget::Directed(name) => {
+            let parent_val = interp
+                .arena
+                .get(owner)
+                .slots
+                .iter()
+                .find(|s| s.kind == SlotKind::Parent && &s.name == name)
+                .map(|s| s.value);
+            match parent_val {
+                Some(v) => lookup_in(v, sel, interp, &mut Vec::new()),
+                None => {
+                    return Err(EgoSignal::Err(EgoError::new(
+                        span.clone(),
+                        format!("directed resend: no parent slot named '{name}'"),
+                    )));
+                }
+            }
+        }
+    };
+
+    invoke_lookup(lookup, activation.self_obj, sel, args, span, interp)
+}
+
+/// Shared tail of `eval_send`/`eval_resend`: turns a completed slot lookup
+/// into an evaluation result. `self_obj` is the activation the invoked
+/// method should see as `self` — the message receiver for `eval_send`, the
+/// *original* receiver (unchanged) for `eval_resend`.
+fn invoke_lookup(
+    lookup: Result<Option<SlotLookup>, String>,
+    self_obj: ObjectId,
+    sel: &str,
+    args: &[ObjectId],
+    span: &SourceSpan,
+    interp: &mut Interpreter,
+) -> EvalResult {
+    match lookup {
+        Ok(Some(SlotLookup::Method(owner, method_def))) => {
+            eval_method(self_obj, Some(owner), method_def, args, span, interp)
+        }
+        Ok(Some(SlotLookup::Value(val))) => Ok(val),
+        Ok(Some(SlotLookup::VarSetter(owner, name))) => {
             if args.len() != 1 {
                 return Err(EgoSignal::Err(EgoError::new(
                     span.clone(),
@@ -140,10 +249,11 @@ pub fn eval_send(
                 ))),
             }
         }
-        None => Err(EgoSignal::Err(EgoError::new(
+        Ok(None) => Err(EgoSignal::Err(EgoError::new(
             span.clone(),
             format!("message not understood: {sel}"),
         ))),
+        Err(msg) => Err(EgoSignal::Err(EgoError::new(span.clone(), msg))),
     }
 }
 
@@ -289,13 +399,24 @@ pub fn eval_expr(
 
         ExprKind::Self_ => Ok(activation.self_obj),
 
-        ExprKind::Resend => match activation.resend_start {
-            Some(obj) => Ok(obj),
-            None => Err(EgoSignal::Err(EgoError::new(
-                expr.span.clone(),
-                "resend used outside a method".into(),
-            ))),
-        },
+        ExprKind::ResendSend { target, sel, args } => {
+            let roots_base = interp.roots.stack_roots.len();
+            let mut arg_ids = Vec::with_capacity(args.len());
+            for a in args {
+                match eval_expr(a, activation, interp) {
+                    Ok(id) => {
+                        interp.roots.stack_roots.push(id);
+                        arg_ids.push(id);
+                    }
+                    Err(e) => {
+                        interp.roots.stack_roots.truncate(roots_base);
+                        return Err(e);
+                    }
+                }
+            }
+            interp.roots.stack_roots.truncate(roots_base);
+            eval_resend(target, sel, &arg_ids, activation, &expr.span, interp)
+        }
 
         ExprKind::Ident(name) => {
             if let Some(&val) = activation.env.borrow().get(name.as_str()) {

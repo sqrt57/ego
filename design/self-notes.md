@@ -412,10 +412,23 @@ had to be renamed to capitalize it (`on:do:` → `on:Do:`, `ifTrue:ifFalse:` →
 `ifTrue:False:`, `value:value:` → `value:With:`, `between:and:` →
 `between:And:`). The binary-operator restriction and keyword-grouping rule
 are implemented in `treewalk/src/parser.rs` (`parse_binary`,
-`parse_keyword_chain`); implicit-receiver binary/keyword sends and the
-resend dot-syntax are documented in `lang-spec.md`/`lang-grammar.md` but not
-yet implemented — `resend` is currently parsed as an ordinary pseudo-object
-primary, matching the old model, pending a dedicated substage.
+`parse_keyword_chain`). The resend dot-syntax (undirected and directed) was
+implemented at substage 1.9 — see the ROADMAP entry for details; the tight
+(no-whitespace) `.` is resolved at the lexer level (`Token::ResendDot` in
+`lexer.rs`), not via lookahead in the parser. Implicit-receiver binary/
+keyword sends are still documented but not implemented — deferred to a
+later substage.
+
+Built-in numeric/string prototypes give their instances a parent slot named
+literally `"parent*"` (asterisk included), which is not a producible
+`identifier` and so cannot be targeted by directed resend or written as an
+ordinary send. This is intentional, not a gap: directed resend only earns
+its keep when a selector is reachable through *more than one* parent, and
+the built-in chain (`3 → integer_proto → int_trait`, one parent per link) is
+strictly linear — undirected `resend` already reaches the whole chain.
+Revisit when substage 1.16 (mirrors) lets user code attach a second parent
+to `integer_proto`/`float_proto`/`string_proto`, at which point ambiguity
+becomes possible and these slots should get a nameable slot name.
 
 ---
 

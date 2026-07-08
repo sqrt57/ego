@@ -27,6 +27,10 @@ pub enum Token {
     // Punctuation
     Caret,   // ^
     Dot,     // .
+    /// `.` with no whitespace on either side, immediately preceded by an
+    /// `Ident`/`Resend` token and immediately followed by the start of a
+    /// message — the resend syntax `resend.foo` / `parentName.foo`.
+    ResendDot,
     Semi,    // ;
     Colon,   // : (standalone, for :param in arg slots)
     LParen,  // (
@@ -57,6 +61,12 @@ struct Lexer {
     line: u32,
     col: u32,
     file: Rc<String>,
+    /// Position right after the previously emitted token, used to detect
+    /// whether the upcoming `.` is glued to it with no whitespace between.
+    prev_token_end: usize,
+    /// Whether the previously emitted token was an `Ident` or `Resend` —
+    /// the only tokens a `ResendTarget` can be.
+    prev_token_is_resend_target: bool,
 }
 
 impl Lexer {
@@ -67,6 +77,8 @@ impl Lexer {
             line: 1,
             col: 1,
             file,
+            prev_token_end: 0,
+            prev_token_is_resend_target: false,
         }
     }
 
@@ -340,11 +352,24 @@ impl Lexer {
                 return Ok(Some(self.lex_binary(span)));
             }
 
+            // `.`: distinguish an ordinary statement/slot separator from a
+            // resend dot. A resend dot has no whitespace on either side and
+            // sits right after an `Ident`/`Resend` token — see the `Dot`
+            // handling comment on `Token::ResendDot`.
+            if ch == '.' {
+                let dot_pos = self.pos;
+                self.advance();
+                let tight_left =
+                    self.prev_token_is_resend_target && dot_pos == self.prev_token_end;
+                let tight_right = matches!(self.peek(), Some(c) if !c.is_whitespace());
+                let token = if tight_left && tight_right { Token::ResendDot } else { Token::Dot };
+                return Ok(Some(TokenWithSpan { token, span }));
+            }
+
             // Single-character punctuation
             self.advance();
             let token = match ch {
                 '^' => Token::Caret,
-                '.' => Token::Dot,
                 ';' => Token::Semi,
                 ':' => Token::Colon,
                 '(' => Token::LParen,
@@ -362,6 +387,8 @@ impl Lexer {
     fn lex_all(mut self) -> Result<Vec<TokenWithSpan>, EgoError> {
         let mut tokens = Vec::new();
         while let Some(tok) = self.next_token()? {
+            self.prev_token_end = self.pos;
+            self.prev_token_is_resend_target = matches!(tok.token, Token::Ident(_) | Token::Resend);
             tokens.push(tok);
         }
         Ok(tokens)
