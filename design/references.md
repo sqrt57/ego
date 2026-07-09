@@ -11,6 +11,7 @@ Downloaded PDFs are in `../papers/` (not tracked in git).
 **Self Handbook (2024.1)**
 — Official language reference. Covers the full object model, message dispatch, blocks, mirrors, exception handling, cascades, and the numeric tower.
 — https://handbook.selflanguage.org/2024.1/ (online only, no PDF)
+— Chapter 4, "The Self World" (built-in/stdlib objects), is the primary source for `self-notes.md` §12 and `stdlib.md`: `selfwrld.html`, with 15 subsections at the same base path — `worldorg.html` (world organization/lobby), `roots.html` (default behavior, clonable/oddball), `blocks.html` (blocks/booleans/control), `numbers.html` (numeric tower, time), `collections.html`, `pairs.html`, `mirrors.html`, `messages.html` (message objects, resend/delegation), `processes.html`, `foreign.html` (FFI), `unix.html` (I/O), `oddball.html` (misc singletons), `lowlevel.html` (interrupts), `textdebug.html` (textual debugger), `logging.html`.
 
 ---
 

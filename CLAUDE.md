@@ -10,4 +10,4 @@ ego/
   papers/   ← academic reference PDFs, not tracked
 ```
 
-Source code changes: feature branch. Doc changes coupled to code: same branch. Standalone doc changes: commit directly to `main`.
+Commit directly to `main` for all changes — code and docs alike. Feature branches are overkill for this solo project at its current stage.

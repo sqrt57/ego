@@ -45,6 +45,11 @@ ego/
 `include_str!("../boot/boot.ego")`. This avoids install-path issues; the
 interpreter is a single self-contained binary.
 
+Crate uses Rust edition 2024. Since the binary name (`ego`) differs from the
+package name (`treewalk`), `[[bin]]` must set `path = "src/main.rs"`
+explicitly in `Cargo.toml` — edition 2024 no longer infers `src/main.rs` in
+that case.
+
 ---
 
 ## Object model
@@ -782,3 +787,9 @@ tests/eval_golden/
 
 This suite is the cross-stage regression guard. Stage 2 (bytecode VM) and
 Stage 3 (Zig VM) run identical inputs and must produce identical output.
+
+**Windows CRLF gotcha:** `core.autocrlf` converts checked-in `.ego`/`.expected`
+fixtures to CRLF on checkout. The lexer tolerates `\r` fine, but a naive
+trailing-line comparison in the harness doesn't. Compare captured output and
+the `.expected` file using `.trim_end()`, not `.trim_end_matches('\n')`, so a
+trailing `\r` doesn't break exact-string golden comparisons.
