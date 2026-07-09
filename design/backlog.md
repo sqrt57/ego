@@ -112,3 +112,22 @@ bigger change touching `eval_object_slots` and possibly GC root-marking)?
 This will only get more pressing as later substages add `nil`-testing,
 exception prototypes, and mirrors, all of which are lobby bindings that
 method bodies will need to reach routinely.
+
+## `_PrintLine:` primitive exists but has no ego-level entry point
+
+`primitives.rs` registers `_PrintLine:` (writes a string to stdout plus a
+newline) and `rs-treewalk-impl.md`'s primitive table documents it, but
+nothing in `boot.ego` calls it — there is no `stdout`/`printLine:`/`show:`
+wired up yet (`stdlib.md`'s `Console` section, § "The lobby binds `stdin`,
+`stdout`, and `stderr`," is still just a spec, not implemented). Concretely,
+an `.ego` *script* currently has no way to produce explicit output at all;
+the only visible output is the REPL's/`-e`'s automatic `printString` of a
+fragment's last expression, which script mode deliberately suppresses (see
+`cli.md`'s script-mode rule). Found while writing substage 1.13's CLI
+integration tests (`tests/cli_tests.rs`): those tests can only assert on
+exit codes, the auto-print/no-print rule, and `file:line:col:` diagnostics —
+they can't exercise a script actually printing something, since there's
+currently nothing in the language that lets it. Revisit once the
+collections/IO substage wires up `stdout`/`stderr`/`stdin` per `stdlib.md`;
+at that point add a golden or CLI test that drives real script output
+through `_PrintLine:`.
