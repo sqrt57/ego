@@ -314,6 +314,21 @@ form of global state.
 A REPL evaluates each top-level statement against the lobby as it is read
 and prints the resulting object's `printString`.
 
+### Reaching the lobby from elsewhere
+
+Bare identifiers are implicit sends to `self` (§2), so an object only sees
+the lobby's globals if the lobby is reachable through its own parent chain
+— there is no separate name-resolution path for "globals" distinct from
+ordinary message lookup. Every built-in prototype's trait guarantees this:
+cloning from (or setting your `parent*` to) any standard-library object
+gives you a path back to the lobby, so `true`, `false`, `nil`, and other
+globals are always reachable from a method body built on the standard
+library. An object with no parent slot at all — most commonly a bespoke
+object literal that declares none — has no such path and cannot see the
+lobby's globals unless one is added explicitly (§1's two-phase
+construction note covers the mechanics of doing that from a slot
+initializer).
+
 ---
 
 ## 7. Control Flow via Messages

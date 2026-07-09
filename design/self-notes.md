@@ -223,11 +223,22 @@ parent chain was never wired back toward `defaultBehavior`/`globals` — a
 bespoke nested object literal, for instance — has no path to the lobby at
 all.
 
-**Ego stance — adopt.** ego's lobby is the same concept. Global state is
-accessible only through the lobby; there are no implicit global variables.
-Whether ego makes the lobby a universal ancestor (simplifying away this
-particular Self gotcha) or preserves the same opt-out convention is an
-open design question, not yet decided.
+**Ego stance — adopt, with the reachability question resolved.** ego's
+lobby is the same concept: global state is accessible only through it,
+there are no implicit global variables. Unlike Self, where reaching the
+lobby from an arbitrary object is convention that individual traits either
+opt into or don't, ego **enforces** it for the standard library: every
+built-in trait (`int_trait`, `float_trait`, `string_trait`, `block_trait`,
+`bool_trait`, `exception_trait`) is wired in `bootstrap.rs` with a
+`parent*` slot straight to the lobby, so anything that clones from a
+stdlib prototype is guaranteed a path to `true`/`false`/`nil`/other
+globals. This was a real gap, not just theoretical: before this wiring
+existed, no non-top-level method body could reach a lobby global at all —
+see `treewalk/tests/eval_golden/1.6-objects/builtin_trait_reaches_lobby.ego`.
+A genuinely bespoke object with no parent slot of its own — a nested object
+literal with no `parent* = ...` clause, say — still gets none of this for
+free, matching Self's opt-out behavior exactly; the enforcement is scoped
+to "built from the standard library," not universal.
 
 ---
 

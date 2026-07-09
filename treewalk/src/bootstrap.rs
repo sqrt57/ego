@@ -198,6 +198,12 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     // mirror-based reflection,
     // substage 1.16, since boot.ego has no way to attach methods to an
     // already-allocated prototype object before then.)
+    //
+    // Each trait also gets a `parent*` slot back to the lobby (self-notes.md
+    // §6): without it, a method body on any built-in object — say, `not`
+    // calling `ifTrue:` — has no path back to `true`/`false`/`nil` or any
+    // other lobby global, since only the lobby's own activation starts with
+    // `self` already bound to the lobby.
     let int_trait = make_trait(
         &[("printString", "_IntPrintString")],
         &[
@@ -207,6 +213,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         ],
         &mut arena, &roots,
     );
+    arena.get_mut(int_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
     arena.get_mut(integer_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
@@ -222,6 +233,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         ],
         &mut arena, &roots,
     );
+    arena.get_mut(float_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
     arena.get_mut(float_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
@@ -233,6 +249,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         &[(",", "_StringConcat:")],
         &mut arena, &roots,
     );
+    arena.get_mut(string_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
     arena.get_mut(string_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
@@ -253,6 +274,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     block_trait_obj.slots.push(Slot { name: "on:Do:".to_string(), kind: SlotKind::Method, value: on_do_method });
     block_trait_obj.slots.push(Slot { name: "printString".to_string(), kind: SlotKind::Method, value: block_print });
     let block_trait = alloc_with_gc(&mut arena, &roots, block_trait_obj);
+    arena.get_mut(block_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
     arena.get_mut(block_proto).slots.push(Slot {
         name: "parent*".to_string(),
         kind: SlotKind::Parent,
@@ -288,6 +314,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         exception_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
     }
     let exception_trait = alloc_with_gc(&mut arena, &roots, exception_trait_obj);
+    arena.get_mut(exception_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
 
     arena.get_mut(error_proto).slots.push(Slot {
         name: "parent*".to_string(),
@@ -334,6 +365,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         bool_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
     }
     let bool_trait = alloc_with_gc(&mut arena, &roots, bool_trait_obj);
+    arena.get_mut(bool_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
     for proto in [true_id, false_id] {
         arena.get_mut(proto).slots.push(Slot {
             name: "parent*".to_string(),
