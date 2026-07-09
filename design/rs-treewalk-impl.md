@@ -88,7 +88,11 @@ pub enum ObjectKind {
     Plain,
     Integer(i64),
     Float(f64),
-    BigInt(Box<BigInt>),        // num-bigint crate; added at substage 1.18
+    BigInt(Box<BigInt>),        // num-bigint crate; substage 1.18. Parent is
+                                 // integer_proto, same as Integer — arithmetic
+                                 // primitives normalize every result back to
+                                 // Integer when it fits in i64, so a value has
+                                 // exactly one canonical representation.
     StringVal(Box<str>),
     Method(Rc<MethodDef>),
     Block(Box<BlockData>),
@@ -391,10 +395,10 @@ primitive name from a normal dispatch miss.
 
 | Selector | Arity | Notes |
 |---|---|---|
-| `_IntAdd:` | 1 | Promotes to BigInt on overflow (substage 1.18) |
-| `_IntSub:` | 1 | |
-| `_IntMul:` | 1 | |
-| `_IntDiv:` | 1 | Signals `zeroDivide` |
+| `_IntAdd:` | 1 | Promotes to `BigInt` on overflow; also accepts a `BigInt` receiver |
+| `_IntSub:` | 1 | Same promotion; result normalizes back to `Integer` if it fits |
+| `_IntMul:` | 1 | Same promotion |
+| `_IntDiv:` | 1 | Signals `zeroDivide`; promotes on the `i64::MIN / -1` overflow case |
 | `_IntMod:` | 1 | Signals `zeroDivide` |
 | `_IntLt:` | 1 | Returns `true_id` or `false_id` |
 | `_IntLe:` | 1 | |

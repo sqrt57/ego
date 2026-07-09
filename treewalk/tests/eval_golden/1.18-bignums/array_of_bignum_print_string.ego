@@ -1,0 +1,5 @@
+[| a <- 0 |
+    a <- array new: 1.
+    a at: 1 Put: (9223372036854775807 + 1).
+    a printString
+] value

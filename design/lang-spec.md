@@ -379,8 +379,10 @@ All built-in objects respond to `copy` (shallow clone, as described in §1)
 and `printString` (returns a string representation). All built-in objects
 except `nil` respond to `isNil` → `false` and `notNil` → `true`.
 
-Integer arithmetic promotes transparently to bignums on overflow. Mixed
-int/float expressions return float.
+Integer arithmetic promotes transparently to bignums on overflow, and demotes
+back to a plain integer if a later operation brings the result back within
+range — a value has no separate "bignum" identity visible to ego code, just
+one integer type. Mixed int/float expressions return float.
 
 `array new: n` returns a fresh array of `n` elements, each initialised to
 `nil`. Indexing is 1-based; `at:`/`at:Put:` signal `error` when the index is

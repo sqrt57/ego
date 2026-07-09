@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
+
 use crate::arena::{Arena, ObjectId};
 use crate::error::{EgoError, ErrorKind, SourceSpan};
 use crate::gc::{alloc_with_gc, collect, make_string, RootSet};
@@ -41,11 +44,11 @@ fn prim_int_print_string(
     arena: &mut Arena,
     roots: &mut RootSet,
 ) -> Result<ObjectId, EgoError> {
-    let n = match arena.get(recv).kind {
-        ObjectKind::Integer(n) => n,
+    let s: Box<str> = match &arena.get(recv).kind {
+        ObjectKind::Integer(n) => n.to_string().into_boxed_str(),
+        ObjectKind::BigInt(n) => n.to_string().into_boxed_str(),
         _ => return Err(EgoError::with_kind(prim_span(), "_IntPrintString requires integer receiver".into(), ErrorKind::PrimitiveError)),
     };
-    let s: Box<str> = n.to_string().into_boxed_str();
     Ok(alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s))))
 }
 
@@ -105,15 +108,49 @@ fn prim_string_concat(
 
 enum Num {
     Int(i64),
+    BigInt(BigInt),
     Float(f64),
 }
 
 impl Num {
     fn as_f64(&self) -> f64 {
-        match *self {
-            Num::Int(n) => n as f64,
-            Num::Float(f) => f,
+        match self {
+            Num::Int(n) => *n as f64,
+            Num::BigInt(b) => b.to_f64().unwrap_or(f64::INFINITY),
+            Num::Float(f) => *f,
         }
+    }
+}
+
+/// Receiver-side view for integer arithmetic: a receiver is either a plain
+/// `Integer` or an already-promoted `BigInt` — never a `Float` (arithmetic
+/// selectors like `_IntAdd:` are only ever bound on `integer_proto`).
+enum IntRepr {
+    Small(i64),
+    Big(BigInt),
+}
+
+impl IntRepr {
+    fn to_big(self) -> BigInt {
+        match self {
+            IntRepr::Small(n) => BigInt::from(n),
+            IntRepr::Big(n) => n,
+        }
+    }
+
+    fn as_f64(&self) -> f64 {
+        match self {
+            IntRepr::Small(n) => *n as f64,
+            IntRepr::Big(n) => n.to_f64().unwrap_or(f64::INFINITY),
+        }
+    }
+}
+
+fn as_int_repr(id: ObjectId, arena: &Arena, ctx: &str) -> Result<IntRepr, EgoError> {
+    match &arena.get(id).kind {
+        ObjectKind::Integer(n) => Ok(IntRepr::Small(*n)),
+        ObjectKind::BigInt(n) => Ok(IntRepr::Big((**n).clone())),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires integer receiver"), ErrorKind::PrimitiveError)),
     }
 }
 
@@ -132,9 +169,10 @@ fn as_float(id: ObjectId, arena: &Arena, ctx: &str) -> Result<f64, EgoError> {
 }
 
 fn as_num(id: ObjectId, arena: &Arena, ctx: &str) -> Result<Num, EgoError> {
-    match arena.get(id).kind {
-        ObjectKind::Integer(n) => Ok(Num::Int(n)),
-        ObjectKind::Float(f) => Ok(Num::Float(f)),
+    match &arena.get(id).kind {
+        ObjectKind::Integer(n) => Ok(Num::Int(*n)),
+        ObjectKind::BigInt(n) => Ok(Num::BigInt((**n).clone())),
+        ObjectKind::Float(f) => Ok(Num::Float(*f)),
         _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires a numeric argument"), ErrorKind::PrimitiveError)),
     }
 }
@@ -143,14 +181,6 @@ fn one_arg(args: &[ObjectId], ctx: &str) -> Result<ObjectId, EgoError> {
     args.first().copied().ok_or_else(|| {
         EgoError::with_kind(prim_span(), format!("{ctx} requires one argument"), ErrorKind::PrimitiveError)
     })
-}
-
-fn overflow_err() -> EgoError {
-    EgoError::with_kind(
-        prim_span(),
-        "integer overflow (bignum promotion not implemented until substage 1.17)".into(),
-        ErrorKind::PrimitiveError,
-    )
 }
 
 fn div_zero_err() -> EgoError {
@@ -177,6 +207,28 @@ fn make_float(f: f64, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     id
 }
 
+fn make_bigint(n: BigInt, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::BigInt(Box::new(n))));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.integer_proto,
+    });
+    id
+}
+
+/// Picks the canonical representation for an integer arithmetic result: a
+/// plain `Integer` when it fits in `i64`, otherwise a `BigInt`. Every
+/// bignum-producing primitive routes its result through this so that a
+/// value has exactly one representation regardless of how it was computed
+/// (needed for `=`/`~=` to stay correct across `Integer`/`BigInt`).
+fn make_norm_int(n: BigInt, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    match n.to_i64() {
+        Some(small) => make_int(small, arena, roots),
+        None => make_bigint(n, arena, roots),
+    }
+}
+
 fn cmp_result(b: bool, roots: &RootSet) -> ObjectId {
     if b { roots.true_id } else { roots.false_id }
 }
@@ -188,13 +240,21 @@ fn int_arith(
     roots: &mut RootSet,
     sel: &str,
     int_op: fn(i64, i64) -> Option<i64>,
+    big_op: fn(&BigInt, &BigInt) -> BigInt,
     float_op: fn(f64, f64) -> f64,
 ) -> Result<ObjectId, EgoError> {
-    let a = as_int(recv, arena, sel)?;
+    let a = as_int_repr(recv, arena, sel)?;
     let arg = one_arg(args, sel)?;
     match as_num(arg, arena, sel)? {
-        Num::Int(b) => int_op(a, b).map(|s| make_int(s, arena, roots)).ok_or_else(overflow_err),
-        Num::Float(b) => Ok(make_float(float_op(a as f64, b), arena, roots)),
+        Num::Int(b) => match a {
+            IntRepr::Small(a) => match int_op(a, b) {
+                Some(s) => Ok(make_int(s, arena, roots)),
+                None => Ok(make_norm_int(big_op(&BigInt::from(a), &BigInt::from(b)), arena, roots)),
+            },
+            IntRepr::Big(a) => Ok(make_norm_int(big_op(&a, &BigInt::from(b)), arena, roots)),
+        },
+        Num::BigInt(b) => Ok(make_norm_int(big_op(&a.to_big(), &b), arena, roots)),
+        Num::Float(b) => Ok(make_float(float_op(a.as_f64(), b), arena, roots)),
     }
 }
 
@@ -219,13 +279,18 @@ fn int_cmp(
     roots: &RootSet,
     sel: &str,
     int_op: fn(i64, i64) -> bool,
+    big_op: fn(&BigInt, &BigInt) -> bool,
     float_op: fn(f64, f64) -> bool,
 ) -> Result<ObjectId, EgoError> {
-    let a = as_int(recv, arena, sel)?;
+    let a = as_int_repr(recv, arena, sel)?;
     let arg = one_arg(args, sel)?;
     let result = match as_num(arg, arena, sel)? {
-        Num::Int(b) => int_op(a, b),
-        Num::Float(b) => float_op(a as f64, b),
+        Num::Int(b) => match a {
+            IntRepr::Small(a) => int_op(a, b),
+            IntRepr::Big(a) => big_op(&a, &BigInt::from(b)),
+        },
+        Num::BigInt(b) => big_op(&a.to_big(), &b),
+        Num::Float(b) => float_op(a.as_f64(), b),
     };
     Ok(cmp_result(result, roots))
 }
@@ -245,58 +310,70 @@ fn float_cmp(
 }
 
 fn prim_int_add(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_arith(recv, args, arena, roots, "_IntAdd:", i64::checked_add, |a, b| a + b)
+    int_arith(recv, args, arena, roots, "_IntAdd:", i64::checked_add, |a, b| a + b, |a, b| a + b)
 }
 
 fn prim_int_sub(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_arith(recv, args, arena, roots, "_IntSub:", i64::checked_sub, |a, b| a - b)
+    int_arith(recv, args, arena, roots, "_IntSub:", i64::checked_sub, |a, b| a - b, |a, b| a - b)
 }
 
 fn prim_int_mul(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_arith(recv, args, arena, roots, "_IntMul:", i64::checked_mul, |a, b| a * b)
+    int_arith(recv, args, arena, roots, "_IntMul:", i64::checked_mul, |a, b| a * b, |a, b| a * b)
 }
 
 fn prim_int_div(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    let a = as_int(recv, arena, "_IntDiv:")?;
+    let a = as_int_repr(recv, arena, "_IntDiv:")?;
     let arg = one_arg(args, "_IntDiv:")?;
     match as_num(arg, arena, "_IntDiv:")? {
         Num::Int(b) => {
             if b == 0 {
                 return Err(div_zero_err());
             }
-            a.checked_div(b).map(|q| make_int(q, arena, roots)).ok_or_else(overflow_err)
+            match a {
+                IntRepr::Small(a) => match a.checked_div(b) {
+                    Some(q) => Ok(make_int(q, arena, roots)),
+                    None => Ok(make_norm_int(BigInt::from(a) / BigInt::from(b), arena, roots)),
+                },
+                IntRepr::Big(a) => Ok(make_norm_int(a / BigInt::from(b), arena, roots)),
+            }
+        }
+        Num::BigInt(b) => {
+            if b == BigInt::from(0) {
+                return Err(div_zero_err());
+            }
+            Ok(make_norm_int(a.to_big() / b, arena, roots))
         }
         Num::Float(b) => {
             if b == 0.0 {
                 return Err(div_zero_err());
             }
-            Ok(make_float(a as f64 / b, arena, roots))
+            Ok(make_float(a.as_f64() / b, arena, roots))
         }
     }
 }
 
 fn prim_int_lt(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntLt:", |a, b| a < b, |a, b| a < b)
+    int_cmp(recv, args, arena, roots, "_IntLt:", |a, b| a < b, |a, b| a < b, |a, b| a < b)
 }
 
 fn prim_int_le(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntLe:", |a, b| a <= b, |a, b| a <= b)
+    int_cmp(recv, args, arena, roots, "_IntLe:", |a, b| a <= b, |a, b| a <= b, |a, b| a <= b)
 }
 
 fn prim_int_gt(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntGt:", |a, b| a > b, |a, b| a > b)
+    int_cmp(recv, args, arena, roots, "_IntGt:", |a, b| a > b, |a, b| a > b, |a, b| a > b)
 }
 
 fn prim_int_ge(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntGe:", |a, b| a >= b, |a, b| a >= b)
+    int_cmp(recv, args, arena, roots, "_IntGe:", |a, b| a >= b, |a, b| a >= b, |a, b| a >= b)
 }
 
 fn prim_int_eq(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntEq:", |a, b| a == b, |a, b| a == b)
+    int_cmp(recv, args, arena, roots, "_IntEq:", |a, b| a == b, |a, b| a == b, |a, b| a == b)
 }
 
 fn prim_int_ne(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
-    int_cmp(recv, args, arena, roots, "_IntNe:", |a, b| a != b, |a, b| a != b)
+    int_cmp(recv, args, arena, roots, "_IntNe:", |a, b| a != b, |a, b| a != b, |a, b| a != b)
 }
 
 fn prim_float_add(recv: ObjectId, args: &[ObjectId], arena: &mut Arena, roots: &mut RootSet) -> Result<ObjectId, EgoError> {
@@ -464,6 +541,7 @@ fn render_element(id: ObjectId, arena: &Arena, roots: &RootSet) -> String {
     }
     match &arena.get(id).kind {
         ObjectKind::Integer(n) => n.to_string(),
+        ObjectKind::BigInt(n) => n.to_string(),
         ObjectKind::Float(f) => format_float(*f),
         ObjectKind::StringVal(s) => s.to_string(),
         ObjectKind::Array(elems) => {

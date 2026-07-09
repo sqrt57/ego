@@ -206,7 +206,7 @@ Needs substage 1.16's arrays: `slotNames` returns one.
 
 Spec: [lang-spec.md §11](lang-spec.md#11-mirrors).
 
-### Substage 1.18 — Evaluator: bignums
+### Substage 1.18 — Evaluator: bignums ✓
 
 Arbitrary-precision integers. Small integers (fitting a machine word) are
 handled from substage 1.5; this substage adds transparent promotion to

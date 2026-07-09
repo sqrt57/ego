@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use num_bigint::BigInt;
+
 use crate::arena::ObjectId;
 use crate::ast::{BlockLit, Stmt};
 use crate::env::{ActivationId, Env};
@@ -22,6 +24,11 @@ impl Object {
 pub enum ObjectKind {
     Plain,
     Integer(i64),
+    /// Arbitrary-precision integer (substage 1.18), produced only by
+    /// promotion on arithmetic overflow — no literal syntax. Parent is
+    /// `integer_proto`, same as `Integer`: ego code sees one uniform
+    /// integer type, never a distinct bignum kind.
+    BigInt(Box<BigInt>),
     Float(f64),
     StringVal(Box<str>),
     Method(Rc<MethodDef>),

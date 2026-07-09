@@ -9,5 +9,9 @@ path = "src/main.rs"
 
 [lib]
 
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
+
 [dev-dependencies]
 rstest = "0.23"
