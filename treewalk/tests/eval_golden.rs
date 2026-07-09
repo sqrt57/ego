@@ -84,6 +84,11 @@ fn golden_1_12_strings() {
     run_golden_dir("tests/eval_golden/1.12-strings");
 }
 
+#[test]
+fn golden_1_14_cascades() {
+    run_golden_dir("tests/eval_golden/1.14-cascades");
+}
+
 fn eval_err_full(source: &str, filename: &str) -> treewalk::error::EgoError {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, filename, &mut interp) {

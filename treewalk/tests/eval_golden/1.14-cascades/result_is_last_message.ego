@@ -1,0 +1,4 @@
+(| val <- 0.
+   set: x = ( val: x. 999 ).
+   report = ( val )
+|) set: 5; report

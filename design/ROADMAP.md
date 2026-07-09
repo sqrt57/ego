@@ -162,7 +162,7 @@ source location tracking through lexer, parser, and evaluator.
 
 Spec: [cli.md](cli.md).
 
-### Substage 1.14 — Evaluator: cascades
+### Substage 1.14 — Evaluator: cascades ✓
 
 `;` cascade syntax — sends a sequence of messages to the same receiver
 without repeating it.
@@ -171,7 +171,7 @@ without repeating it.
 collection add: 1; add: 2; add: 3.
 ```
 
-Spec: [lang-spec.md](lang-spec.md) — section to be written.
+Spec: [lang-spec.md](lang-spec.md#9-cascades).
 
 ### Substage 1.15 — Evaluator: exception handling
 

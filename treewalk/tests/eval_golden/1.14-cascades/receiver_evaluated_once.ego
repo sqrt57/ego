@@ -1,0 +1,2 @@
+(| makeAcc = ( (| val <- 0. add: x = ( val: val + x. self ). total = ( val ) |) )
+|) makeAcc add: 1; add: 2; total

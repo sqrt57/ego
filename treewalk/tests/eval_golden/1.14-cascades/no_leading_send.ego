@@ -1,0 +1,4 @@
+(| val <- 0.
+   set: x = ( val: x. self ).
+   report = ( val )
+|) ; set: 7; report

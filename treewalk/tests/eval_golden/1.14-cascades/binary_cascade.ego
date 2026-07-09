@@ -1,0 +1,4 @@
+(| val <- 0.
+   + x = ( val: val + x. self ).
+   total = ( val )
+|) + 1; + 2; + 3; total

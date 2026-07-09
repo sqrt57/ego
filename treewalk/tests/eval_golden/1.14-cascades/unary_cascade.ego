@@ -1,0 +1,4 @@
+(| val <- 0.
+   incr = ( val: val + 1. self ).
+   total = ( val )
+|) incr; incr; incr; total

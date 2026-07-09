@@ -1,0 +1,4 @@
+(| other = (| bar: x = ( 222 ) |).
+   foo = ( other ).
+   bar: x = ( 111 )
+|) foo bar: 1; bar: 2

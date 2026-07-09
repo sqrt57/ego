@@ -346,12 +346,17 @@ collection add: 1; add: 2; add: 3.
 The receiver is the receiver of the *message immediately before the first
 `;`* — not that message's result. In `collection add: 1; add: 2; add: 3`,
 the shared receiver is `collection`; `add: 1` is itself the first cascaded
-message, sent to `collection` exactly like `add: 2` and `add: 3` are. The
-receiver expression is evaluated exactly once, however many messages precede
-the first `;`:
+message, sent to `collection` exactly like `add: 2` and `add: 3` are.
+
+Only the outermost message before the first `;` is peeled apart this way.
+Any messages nested inside *its* receiver expression are ordinary sends,
+evaluated once as part of computing the shared receiver — they are not
+themselves cascaded:
 
 ```
-a foo bar: 1; baz.   "foo, then bar: 1, then baz — all three sent to a"
+a foo bar: 1; baz.   "bar: 1, then baz — both sent to (a foo)'s result.
+                       foo is not cascaded; it's part of computing the
+                       receiver, and runs exactly once."
 ```
 
 Each subsequent `;`-separated message is sent to that same receiver. The
