@@ -1,0 +1,4 @@
+o <- (| x = 1 |).
+m <- reflect: o.
+m at: 'x' Put: 99.
+o x

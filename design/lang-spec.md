@@ -525,7 +525,7 @@ m: reflect: anObject.
 | `m slotNames` | An array of slot-name strings for all slots in the reflectee |
 | `m at: name` | The value of the slot named `name`; signals `error` if absent |
 | `m at: name Put: val` | Assigns the slot named `name` to `val`; signals `error` if absent |
-| `m addSlot: name = val` | Adds a new data slot named `name` with value `val` |
+| `m addSlot: name Value: val` | Adds a new data slot named `name` with value `val` |
 | `m removeSlot: name` | Removes the slot named `name`; signals `error` if absent |
 
 `name` is always a string. Slot names include all slot kinds — data, var,

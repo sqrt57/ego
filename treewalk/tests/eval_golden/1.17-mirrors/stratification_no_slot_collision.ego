@@ -1,0 +1,3 @@
+o <- (| slotNames = 'shadowed' |).
+m <- reflect: o.
+m slotNames

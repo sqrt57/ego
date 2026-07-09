@@ -485,6 +485,121 @@ fn prim_array_print_string(
     Ok(make_string(format!("({})", parts.join(" ")), arena, roots))
 }
 
+// ── Mirrors ─────────────────────────────────────────────────────────────────
+
+fn mirror_reflectee(id: ObjectId, arena: &Arena, ctx: &str) -> Result<ObjectId, EgoError> {
+    match arena.get(id).kind {
+        ObjectKind::Mirror(reflectee) => Ok(reflectee),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires mirror receiver"), ErrorKind::PrimitiveError)),
+    }
+}
+
+fn make_array(elems: Vec<ObjectId>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Array(elems)));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.array_proto,
+    });
+    id
+}
+
+fn find_slot_index(id: ObjectId, name: &str, arena: &Arena) -> Option<usize> {
+    arena.get(id).slots.iter().position(|s| s.name == name)
+}
+
+fn no_such_slot_err(ctx: &str, name: &str) -> EgoError {
+    EgoError::with_kind(prim_span(), format!("{ctx}: no slot named '{name}'"), ErrorKind::PrimitiveError)
+}
+
+fn prim_mirror_of(
+    _recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let target = one_arg(args, "_MirrorOf:")?;
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Mirror(target)));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.mirror_proto,
+    });
+    Ok(id)
+}
+
+fn prim_mirror_slot_names(
+    recv: ObjectId,
+    _args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let reflectee = mirror_reflectee(recv, arena, "_MirrorSlotNames")?;
+    let names: Vec<String> = arena.get(reflectee).slots.iter().map(|s| s.name.clone()).collect();
+    let elems: Vec<ObjectId> = names.into_iter().map(|n| make_string(n, arena, roots)).collect();
+    Ok(make_array(elems, arena, roots))
+}
+
+fn prim_mirror_at(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let arg = one_arg(args, "_MirrorAt:")?;
+    let reflectee = mirror_reflectee(recv, arena, "_MirrorAt:")?;
+    let name = as_string(arg, arena, "_MirrorAt:")?.to_string();
+    let idx = find_slot_index(reflectee, &name, arena).ok_or_else(|| no_such_slot_err("_MirrorAt:", &name))?;
+    Ok(arena.get(reflectee).slots[idx].value)
+}
+
+fn prim_mirror_at_put(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    if args.len() < 2 {
+        return Err(EgoError::with_kind(prim_span(), "_MirrorAt:Put: requires two arguments".into(), ErrorKind::PrimitiveError));
+    }
+    let (name_arg, val) = (args[0], args[1]);
+    let reflectee = mirror_reflectee(recv, arena, "_MirrorAt:Put:")?;
+    let name = as_string(name_arg, arena, "_MirrorAt:Put:")?.to_string();
+    let idx = find_slot_index(reflectee, &name, arena).ok_or_else(|| no_such_slot_err("_MirrorAt:Put:", &name))?;
+    arena.get_mut(reflectee).slots[idx].value = val;
+    Ok(val)
+}
+
+fn prim_mirror_add_slot(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    if args.len() < 2 {
+        return Err(EgoError::with_kind(prim_span(), "_MirrorAddSlot:Value: requires two arguments".into(), ErrorKind::PrimitiveError));
+    }
+    let (name_arg, val) = (args[0], args[1]);
+    let reflectee = mirror_reflectee(recv, arena, "_MirrorAddSlot:Value:")?;
+    let name = as_string(name_arg, arena, "_MirrorAddSlot:Value:")?.to_string();
+    arena.get_mut(reflectee).slots.push(Slot { name, kind: SlotKind::Data, value: val });
+    Ok(val)
+}
+
+fn prim_mirror_remove_slot(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let arg = one_arg(args, "_MirrorRemoveSlot:")?;
+    let reflectee = mirror_reflectee(recv, arena, "_MirrorRemoveSlot:")?;
+    let name = as_string(arg, arena, "_MirrorRemoveSlot:")?.to_string();
+    let idx = find_slot_index(reflectee, &name, arena).ok_or_else(|| no_such_slot_err("_MirrorRemoveSlot:", &name))?;
+    arena.get_mut(reflectee).slots.remove(idx);
+    Ok(roots.nil_id)
+}
+
 fn prim_gc_collect(
     _recv: ObjectId,
     _args: &[ObjectId],
@@ -508,6 +623,13 @@ pub fn register_all(prims: &mut PrimitiveTable) {
     prims.register("_ArrayAt:", prim_array_at);
     prims.register("_ArrayAt:Put:", prim_array_at_put);
     prims.register("_ArrayPrintString", prim_array_print_string);
+
+    prims.register("_MirrorOf:", prim_mirror_of);
+    prims.register("_MirrorSlotNames", prim_mirror_slot_names);
+    prims.register("_MirrorAt:", prim_mirror_at);
+    prims.register("_MirrorAt:Put:", prim_mirror_at_put);
+    prims.register("_MirrorAddSlot:Value:", prim_mirror_add_slot);
+    prims.register("_MirrorRemoveSlot:", prim_mirror_remove_slot);
 
     prims.register("_IntAdd:", prim_int_add);
     prims.register("_IntSub:", prim_int_sub);

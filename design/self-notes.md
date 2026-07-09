@@ -329,7 +329,7 @@ how objects are inspected and edited live.
 **Ego stance — adopt API shape, simplify for Stage 1.**
 
 - `reflect: anObject` returns a mirror object (via lobby).
-- Mirror provides: `slotNames`, `at:`, `at:Put:`, `addSlot:=`, `removeSlot:`.
+- Mirror provides: `slotNames`, `at:`, `at:Put:`, `addSlot:Value:`, `removeSlot:`.
 - No slot/method sub-mirrors in Stage 1 — a flat API is sufficient.
 - Richer sub-mirror hierarchy deferred to later stages if needed.
 - The stratification principle is the load-bearing constraint: base objects

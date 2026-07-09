@@ -183,7 +183,7 @@ dead non-local return, arithmetic errors.
 
 Spec: [lang-spec.md §10](lang-spec.md#10-exception-handling).
 
-### Substage 1.16 — Evaluator: arrays
+### Substage 1.16 — Evaluator: arrays ✓
 
 Fixed-size, indexed sequences — the minimal collection type, added here
 because substage 1.17 (mirrors) needs `slotNames` to return one and no
@@ -197,7 +197,7 @@ only `,`/`printString` at substage 1.12.
 
 Spec: [§ Built-in Objects](lang-spec.md#8-built-in-objects).
 
-### Substage 1.17 — Evaluator: mirror-based reflection
+### Substage 1.17 — Evaluator: mirror-based reflection ✓
 
 Mirror objects for introspective access to an object's slots — read slot
 names and values, add or remove slots, without building these operations

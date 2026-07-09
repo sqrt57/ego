@@ -1,0 +1,2 @@
+m <- reflect: (| x = 1. y <- 2 |).
+m slotNames

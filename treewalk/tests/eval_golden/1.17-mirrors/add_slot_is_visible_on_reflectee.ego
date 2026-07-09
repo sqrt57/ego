@@ -1,0 +1,4 @@
+o <- (| x = 1 |).
+m <- reflect: o.
+m addSlot: 'z' Value: 42.
+o z

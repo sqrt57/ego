@@ -14,6 +14,7 @@ pub struct RootSet {
     pub string_proto: ObjectId,
     pub block_proto: ObjectId,
     pub array_proto: ObjectId,
+    pub mirror_proto: ObjectId,
     pub error_proto: ObjectId,
     pub message_not_understood_proto: ObjectId,
     pub bad_block_activation_proto: ObjectId,
@@ -35,6 +36,7 @@ impl RootSet {
             string_proto: NULL_ID,
             block_proto: NULL_ID,
             array_proto: NULL_ID,
+            mirror_proto: NULL_ID,
             error_proto: NULL_ID,
             message_not_understood_proto: NULL_ID,
             bad_block_activation_proto: NULL_ID,
@@ -97,6 +99,11 @@ pub fn collect(arena: &mut Arena, roots: &RootSet) {
                     if e != NULL_ID {
                         to_visit.push(e);
                     }
+                }
+            }
+            if let ObjectKind::Mirror(reflectee) = &obj.kind {
+                if *reflectee != NULL_ID {
+                    to_visit.push(*reflectee);
                 }
             }
         }

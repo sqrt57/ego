@@ -125,6 +125,11 @@ fn golden_1_16_arrays() {
     run_golden_dir("tests/eval_golden/1.16-arrays");
 }
 
+#[test]
+fn golden_1_17_mirrors() {
+    run_golden_dir("tests/eval_golden/1.17-mirrors");
+}
+
 fn eval_err_full(source: &str, filename: &str) -> treewalk::error::EgoError {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, filename, &mut interp) {
@@ -263,6 +268,26 @@ fn array_at_put_out_of_range_is_fatal() {
 fn array_new_with_negative_size_is_fatal() {
     let msg = eval_err("array new: -1");
     assert!(msg.contains("non-negative"), "got: {msg}");
+}
+
+// ── Mirrors (substage 1.17) ──────────────────────────────────────────────────
+
+#[test]
+fn mirror_at_missing_slot_is_fatal() {
+    let msg = eval_err("(reflect: (| x = 1 |)) at: 'nope'");
+    assert!(msg.contains("no slot named"), "got: {msg}");
+}
+
+#[test]
+fn mirror_at_put_missing_slot_is_fatal() {
+    let msg = eval_err("(reflect: (| x = 1 |)) at: 'nope' Put: 2");
+    assert!(msg.contains("no slot named"), "got: {msg}");
+}
+
+#[test]
+fn mirror_remove_slot_missing_slot_is_fatal() {
+    let msg = eval_err("(reflect: (| x = 1 |)) removeSlot: 'nope'");
+    assert!(msg.contains("no slot named"), "got: {msg}");
 }
 
 // ── Error location (substage 1.13) ──────────────────────────────────────────

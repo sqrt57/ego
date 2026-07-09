@@ -150,6 +150,7 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let string_proto  = arena.alloc(Object::new(ObjectKind::Plain));
     let block_proto   = arena.alloc(Object::new(ObjectKind::Plain));
     let array_proto   = arena.alloc(Object::new(ObjectKind::Plain));
+    let mirror_proto  = arena.alloc(Object::new(ObjectKind::Plain));
     let error_proto                  = arena.alloc(Object::new(ObjectKind::Plain));
     let message_not_understood_proto = arena.alloc(Object::new(ObjectKind::Plain));
     let bad_block_activation_proto   = arena.alloc(Object::new(ObjectKind::Plain));
@@ -164,6 +165,7 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     roots.string_proto  = string_proto;
     roots.block_proto   = block_proto;
     roots.array_proto   = array_proto;
+    roots.mirror_proto  = mirror_proto;
     roots.error_proto                  = error_proto;
     roots.message_not_understood_proto = message_not_understood_proto;
     roots.bad_block_activation_proto   = bad_block_activation_proto;
@@ -296,6 +298,41 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     });
     let array_new = make_binary_prim_method("_ArrayNew:", &mut arena, &roots);
     arena.get_mut(array_proto).slots.push(Slot { name: "new:".to_string(), kind: SlotKind::Method, value: array_new });
+
+    // Mirrors (substage 1.17): every mirror instance (allocated by
+    // `_MirrorOf:`) gets `mirror_proto` as its parent*, same dual role as
+    // `array_proto` above. There is no "mirror" lobby binding — mirrors are
+    // reachable only via `reflect:` (encapsulation, lang-spec.md §11).
+    let mirror_slot_names = make_unary_prim_method("_MirrorSlotNames", &mut arena, &roots);
+    let mirror_at = make_binary_prim_method("_MirrorAt:", &mut arena, &roots);
+    let mirror_at_put = make_two_arg_prim_method("_MirrorAt:Put:", &mut arena, &roots);
+    let mirror_add_slot = make_two_arg_prim_method("_MirrorAddSlot:Value:", &mut arena, &roots);
+    let mirror_remove_slot = make_binary_prim_method("_MirrorRemoveSlot:", &mut arena, &roots);
+    let mirror_print = make_const_string_method("a Mirror", &mut arena, &roots);
+    let mut mirror_trait_obj = Object::new(ObjectKind::Plain);
+    for (name, method_obj) in [
+        ("slotNames", mirror_slot_names),
+        ("at:", mirror_at),
+        ("at:Put:", mirror_at_put),
+        ("addSlot:Value:", mirror_add_slot),
+        ("removeSlot:", mirror_remove_slot),
+        ("printString", mirror_print),
+    ] {
+        mirror_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
+    let mirror_trait = alloc_with_gc(&mut arena, &roots, mirror_trait_obj);
+    arena.get_mut(mirror_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
+    arena.get_mut(mirror_proto).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: mirror_trait,
+    });
+    let reflect_method = make_binary_prim_method("_MirrorOf:", &mut arena, &roots);
+    arena.get_mut(lobby_id).slots.push(Slot { name: "reflect:".to_string(), kind: SlotKind::Method, value: reflect_method });
 
     let value_method = make_unary_prim_method("_BlockValue", &mut arena, &roots);
     let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);
