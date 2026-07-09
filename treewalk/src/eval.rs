@@ -1055,20 +1055,42 @@ pub fn eval_expr(
             Ok(id)
         }
 
-        ExprKind::Object(obj) => eval_object_lit(obj, activation, interp),
+        ExprKind::Object(obj) => eval_object_lit(obj, interp),
     }
 }
 
-fn eval_object_lit(obj: &ObjectLit, activation: &Activation, interp: &mut Interpreter) -> EvalResult {
+fn eval_object_lit(obj: &ObjectLit, interp: &mut Interpreter) -> EvalResult {
     let new_id = alloc_with_gc(&mut interp.arena, &interp.roots, Object::new(ObjectKind::Plain));
     let roots_base = interp.roots.stack_roots.len();
     interp.roots.stack_roots.push(new_id);
-    let result = eval_object_slots(obj, new_id, activation, interp);
+    let result = eval_object_slots(obj, new_id, interp);
     interp.roots.stack_roots.truncate(roots_base);
     result
 }
 
-fn eval_object_slots(
+/// Data/var/parent slot initializers construct in the *lobby's* context, not
+/// the caller's (lang-spec.md §1, "Two-phase construction") — no lexical
+/// access to whatever method the literal appears inside. Only method-slot
+/// bodies see the eventual receiver's `self`, and only later, at invocation.
+fn eval_object_slots(obj: &ObjectLit, new_id: ObjectId, interp: &mut Interpreter) -> EvalResult {
+    let id = interp.next_activation_id();
+    let lobby_activation = Activation {
+        id,
+        self_obj: interp.roots.lobby,
+        resend_start: None,
+        env: env_new(),
+    };
+    interp.live_activations.insert(id);
+    interp.roots.activation_envs.push(lobby_activation.env.clone());
+
+    let result = eval_object_slots_inner(obj, new_id, &lobby_activation, interp);
+
+    interp.roots.activation_envs.pop();
+    interp.live_activations.remove(&id);
+    result
+}
+
+fn eval_object_slots_inner(
     obj: &ObjectLit,
     new_id: ObjectId,
     activation: &Activation,

@@ -61,6 +61,37 @@ match exactly. Only the syntax for argument slots differs — ego uses `:name`
 inside block headers rather than as standalone slot declarations in object
 literals, because ego does not use the Self standalone-method-object idiom.
 
+### Object literal construction: two-phase, lobby-scoped initializers
+
+Source: Self Handbook 2024.1 §3.1.9 ("Construction of object literals").
+
+Object literals are built in two phases:
+
+1. **Slot initializers** (the `= expr` / `name* = expr` right-hand sides)
+   evaluate once, at construction time, in the context of the **lobby** —
+   not the lexical context of whatever method the literal appears inside,
+   since no such activation exists yet when the literal is being built.
+   Quote: "Slot initializers are *not* evaluated in the lexical context,
+   since none exists at parse time; they are evaluated in the context of
+   an object known as the `lobby`." A slot initializer therefore cannot
+   reference another slot of the object being constructed (no `letrec`)
+   and cannot see the enclosing method's `self` or temporaries — only
+   what's reachable from the lobby.
+2. **Method-slot bodies** run later, at invocation time, with `self` bound
+   to the constructed object itself. They have no lexical link back to
+   whatever code built the literal.
+
+Net effect: a nested object literal's method body has no ambient path to
+the enclosing method's bindings, nor (in general) to the lobby's globals —
+its only reachable state is its own slots and whatever its parent chain
+resolves to. The idiomatic workaround is to capture a needed lobby/outer
+binding into a data slot via the initializer (which *can* see the lobby),
+then read that slot from the method body (an ordinary local self-send).
+Blocks (§5) are the sole exception — they carry a genuine lexical link.
+
+**Ego stance — adopt.** Spec section added: `lang-spec.md` §1, "Two-phase
+construction."
+
 ---
 
 ## 3. Prototype / Traits Split
@@ -129,6 +160,27 @@ not just from the block. This is the Smalltalk-80 convention. A block whose
 enclosing activation has already exited is a **dead block**; a `^` inside it
 that fires after that point signals an error (`badBlockActivation`).
 
+**Activation objects and the lexical chain.** Source: Self Handbook 2024.1
+§3.1.6 (Methods), §3.1.7 (Blocks), §3.3.4 (implicit-receiver messages). A
+block literal creates two runtime objects: a *block data object* (parent →
+shared block behavior) and a *block method object*. Unlike an ordinary
+method object, the block method object has no `self` slot — instead it has
+an anonymous parent slot initialized to the **activation object of the
+lexically enclosing block or method**. This anonymous parent slot is the
+actual closure mechanism: nested blocks chain outward through activation
+objects until reaching the outermost method activation.
+
+An ordinary (non-block) method activation object, by contrast, has only a
+`self` parent slot, initialized to the message **receiver** — no lexical
+parent at all: "The clone's self parent slot is initialized to the
+receiver of the message." Implicit-receiver message lookup begins at the
+*current activation object*, not the receiver directly; for a block this
+walks the activation chain outward before falling through to `self`'s own
+parent chain — which is what lets a block reference an enclosing method's
+locals and `self` even many levels of nesting deep. Object literals get
+none of this (§2's two-phase-construction note): their method bodies are
+`self`-rooted only, with no activation-chain fallback.
+
 **Ego stance — adapt.** Same block syntax, same `value`/`value:With:`
 activation, same `^` non-local-return semantics. Narrower than classic
 Smalltalk-80's blanket "sending `value` to a dead block is always an error":
@@ -151,8 +203,31 @@ user-defined globals. There is no separate global namespace or module system.
 
 REPL interaction sends each typed expression to the lobby as its receiver.
 
+**The lobby is not a universal ancestor.** Source: `worldorg.html`,
+`roots.html`. The relationship runs the other way: the lobby's `globals`
+slot is itself a *parent* slot, so the lobby inherits from
+`globals`/`traits`, not vice versa — "The `globals` slot... is a parent
+slot, so the name of a prototype object needs no prefix." Nothing wires
+the lobby into the parent chain of arbitrary receivers elsewhere in the
+system.
+
+There is also no special syntax or compiler mechanism for a method body to
+reach globals — `langref.html` §3.4.2 lists only `self` and `resend` as
+reserved identifiers; even `true`/`false`/`nil` resolve via ordinary
+implicit-receiver sends. In practice, method bodies reach globals only
+because most objects in the system are conventionally built to inherit the
+lobby's `defaultBehavior` (identity comparison, printing, mirror creation,
+etc.) — explicitly opt-out, not opt-in: "It is entirely permissible to
+construct objects that do not inherit from the lobby." An object whose
+parent chain was never wired back toward `defaultBehavior`/`globals` — a
+bespoke nested object literal, for instance — has no path to the lobby at
+all.
+
 **Ego stance — adopt.** ego's lobby is the same concept. Global state is
 accessible only through the lobby; there are no implicit global variables.
+Whether ego makes the lobby a universal ancestor (simplifying away this
+particular Self gotcha) or preserves the same opt-out convention is an
+open design question, not yet decided.
 
 ---
 
@@ -536,7 +611,9 @@ a future spec revision.
 | Lookup algorithm (depth-first, ambiguity error) | Adopt | |
 | Blocks, `value`/`value:With:` activation | Adopt | Not `value:value:` — see §11 |
 | `^` non-local return, dead-block error | Adopt | |
-| Lobby as root | Adopt | |
+| Block closure via activation-object chain | Adopt | Object literals lack this — see §2, §5 |
+| Object literal two-phase construction (lobby-scoped initializers) | Adopt | Spec in `lang-spec.md` §1 |
+| Lobby as root | Adopt | Not a universal ancestor of other objects — see §6 |
 | Cascades (`;`) | Adopt | Spec section pending |
 | Mirror API (`reflect:`, stratified) | Adopt, simplified | No sub-mirrors in Stage 1 |
 | `on:Do:` exception handling | Adopt | `ExceptionSet` deferred |

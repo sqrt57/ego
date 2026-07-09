@@ -85,6 +85,40 @@ is reproduced with its original name, kind, and value, but slot values
 themselves are not recursively cloned. Cloning is the only way to get a
 "new instance" — there is no `new` keyword and no class/instance distinction.
 
+### Two-phase construction
+
+Building an object literal happens in two phases that run at different
+times with different visibility:
+
+1. **Slot initializers** — the `= expr` / `name* = expr` right-hand sides —
+   evaluate once, at the point the literal is constructed, in the context
+   of the **lobby** (§6). An initializer cannot reference another slot of
+   the object being built (no forward reference, no `letrec`), and has no
+   access to whatever method's `self` or temporaries happen to be in scope
+   around the literal — only names reachable from the lobby.
+2. **Method-slot bodies** run later, at invocation time, with `self` bound
+   to the receiver of the message that invoked them (§2). A method body
+   has no lexical link to the code that constructed the literal.
+
+The consequence: a nested object literal's method body cannot see the
+enclosing method's bindings, and has no automatic path to the lobby's
+globals either — only its own slots and whatever its parent chain resolves
+to. To give a nested object's method access to an outer or lobby binding,
+capture it into a data slot via the initializer (which *is* lobby-scoped)
+and read that slot from the method body:
+
+```
+(|
+    total = someGlobal computeTotal.            "initializer: lobby-scoped"
+    report = ( 'Total: ' , total printString )  "method body: reads `self total`"
+|)
+```
+
+Blocks (§3) are the one exception to this rule: a block literal carries an
+implicit link to the activation of its lexically enclosing block or
+method, giving it genuine lexical access to outer locals and `self` — this
+is what makes a block a closure and an object literal not.
+
 ---
 
 ## 2. Messages
