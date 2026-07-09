@@ -183,15 +183,30 @@ dead non-local return, arithmetic errors.
 
 Spec: [lang-spec.md §10](lang-spec.md#10-exception-handling).
 
-### Substage 1.16 — Evaluator: mirror-based reflection
+### Substage 1.16 — Evaluator: arrays
+
+Fixed-size, indexed sequences — the minimal collection type, added here
+because substage 1.17 (mirrors) needs `slotNames` to return one and no
+substage before this point has any array-returning built-in. `array new: n`
+creates an n-element array with every slot initialised to `nil`; `at:`/
+`at:Put:` are 1-based and signal `error` when out of range; `size` and
+`printString` round out the minimal slice. The richer collection API
+(`do:`, `collect:`, `select:`, `OrderedCollection`, `Dictionary`, …) stays
+in `stdlib.md`, deferred beyond Stage 1 — same precedent as strings getting
+only `,`/`printString` at substage 1.12.
+
+Spec: [§ Built-in Objects](lang-spec.md#8-built-in-objects).
+
+### Substage 1.17 — Evaluator: mirror-based reflection
 
 Mirror objects for introspective access to an object's slots — read slot
 names and values, add or remove slots, without building these operations
 into the core message dispatch. Mirrors keep the base object model clean.
+Needs substage 1.16's arrays: `slotNames` returns one.
 
 Spec: [lang-spec.md §11](lang-spec.md#11-mirrors).
 
-### Substage 1.17 — Evaluator: bignums
+### Substage 1.18 — Evaluator: bignums
 
 Arbitrary-precision integers. Small integers (fitting a machine word) are
 handled from substage 1.5; this substage adds transparent promotion to

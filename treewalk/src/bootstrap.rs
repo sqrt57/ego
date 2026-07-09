@@ -149,6 +149,7 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let float_proto   = arena.alloc(Object::new(ObjectKind::Plain));
     let string_proto  = arena.alloc(Object::new(ObjectKind::Plain));
     let block_proto   = arena.alloc(Object::new(ObjectKind::Plain));
+    let array_proto   = arena.alloc(Object::new(ObjectKind::Plain));
     let error_proto                  = arena.alloc(Object::new(ObjectKind::Plain));
     let message_not_understood_proto = arena.alloc(Object::new(ObjectKind::Plain));
     let bad_block_activation_proto   = arena.alloc(Object::new(ObjectKind::Plain));
@@ -162,6 +163,7 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     roots.float_proto   = float_proto;
     roots.string_proto  = string_proto;
     roots.block_proto   = block_proto;
+    roots.array_proto   = array_proto;
     roots.error_proto                  = error_proto;
     roots.message_not_understood_proto = message_not_understood_proto;
     roots.bad_block_activation_proto   = bad_block_activation_proto;
@@ -182,6 +184,7 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         ("floatProto",   float_proto),
         ("stringProto",  string_proto),
         ("blockProto",   block_proto),
+        ("array",        array_proto),
         ("error",                  error_proto),
         ("messageNotUnderstood",   message_not_understood_proto),
         ("badBlockActivation",     bad_block_activation_proto),
@@ -193,11 +196,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let lobby_id = arena.alloc(lobby);
     roots.lobby = lobby_id;
 
-    // Wire numeric, string, block, and boolean traits (plus nil's printString)
-    // via inline Rust-hardcoded traits. (Moving this into boot.ego needs
-    // mirror-based reflection,
-    // substage 1.16, since boot.ego has no way to attach methods to an
-    // already-allocated prototype object before then.)
+    // Wire numeric, string, block, array, and boolean traits (plus nil's
+    // printString) via inline Rust-hardcoded traits. (Moving this into
+    // boot.ego needs mirror-based reflection, substage 1.17, since boot.ego
+    // has no way to attach methods to an already-allocated prototype object
+    // before then.)
     //
     // Each trait also gets a `parent*` slot back to the lobby (self-notes.md
     // §6): without it, a method body on any built-in object — say, `not`
@@ -259,6 +262,40 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         kind: SlotKind::Parent,
         value: string_trait,
     });
+
+    // Arrays (substage 1.16): `at:Put:` needs two args, so it's built like
+    // block's `value:With:`/`on:Do:` rather than via `make_trait`'s
+    // one-arg-only `binary_methods` list. `new:` lives directly on
+    // `array_proto` (not the shared trait) since only the "array" lobby
+    // binding itself needs to respond to it, mirroring how `true`/`false`
+    // get their own direct `printString` slots instead of going through
+    // `bool_trait`.
+    let array_size = make_unary_prim_method("_ArraySize", &mut arena, &roots);
+    let array_print = make_unary_prim_method("_ArrayPrintString", &mut arena, &roots);
+    let array_at = make_binary_prim_method("_ArrayAt:", &mut arena, &roots);
+    let array_at_put = make_two_arg_prim_method("_ArrayAt:Put:", &mut arena, &roots);
+    let mut array_trait_obj = Object::new(ObjectKind::Plain);
+    for (name, method_obj) in [
+        ("size", array_size),
+        ("printString", array_print),
+        ("at:", array_at),
+        ("at:Put:", array_at_put),
+    ] {
+        array_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
+    let array_trait = alloc_with_gc(&mut arena, &roots, array_trait_obj);
+    arena.get_mut(array_trait).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: lobby_id,
+    });
+    arena.get_mut(array_proto).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: array_trait,
+    });
+    let array_new = make_binary_prim_method("_ArrayNew:", &mut arena, &roots);
+    arena.get_mut(array_proto).slots.push(Slot { name: "new:".to_string(), kind: SlotKind::Method, value: array_new });
 
     let value_method = make_unary_prim_method("_BlockValue", &mut arena, &roots);
     let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);

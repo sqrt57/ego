@@ -1,0 +1,1 @@
+(array new: 3) at: 1 Put: 10; at: 2 Put: 20; at: 3 Put: 30; at: 2

@@ -363,6 +363,128 @@ fn prim_print_line(
     }
 }
 
+// ── Arrays ──────────────────────────────────────────────────────────────────
+
+fn array_elems<'a>(id: ObjectId, arena: &'a Arena, ctx: &str) -> Result<&'a [ObjectId], EgoError> {
+    match &arena.get(id).kind {
+        ObjectKind::Array(v) => Ok(v),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires array receiver"), ErrorKind::PrimitiveError)),
+    }
+}
+
+/// Validates a 1-based array index, returning the corresponding 0-based
+/// offset. Out-of-range and non-integer indices both signal `primitiveError`
+/// (mirrors `_StringConcat:`'s non-string-argument convention — no separate
+/// "index out of range" exception type exists yet).
+fn as_index(id: ObjectId, len: usize, arena: &Arena, ctx: &str) -> Result<usize, EgoError> {
+    let n = as_int(id, arena, ctx)?;
+    if n < 1 || (n as usize) > len {
+        return Err(EgoError::with_kind(prim_span(), format!("{ctx}: index {n} out of range (1..{len})"), ErrorKind::PrimitiveError));
+    }
+    Ok((n - 1) as usize)
+}
+
+fn prim_array_new(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let _ = recv;
+    let arg = one_arg(args, "_ArrayNew:")?;
+    let n = as_int(arg, arena, "_ArrayNew:")?;
+    if n < 0 {
+        return Err(EgoError::with_kind(prim_span(), "_ArrayNew: requires a non-negative size".into(), ErrorKind::PrimitiveError));
+    }
+    let elems = vec![roots.nil_id; n as usize];
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Array(elems)));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.array_proto,
+    });
+    Ok(id)
+}
+
+fn prim_array_size(
+    recv: ObjectId,
+    _args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let len = array_elems(recv, arena, "_ArraySize")?.len();
+    Ok(make_int(len as i64, arena, roots))
+}
+
+fn prim_array_at(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let arg = one_arg(args, "_ArrayAt:")?;
+    let len = array_elems(recv, arena, "_ArrayAt:")?.len();
+    let idx = as_index(arg, len, arena, "_ArrayAt:")?;
+    Ok(array_elems(recv, arena, "_ArrayAt:")?[idx])
+}
+
+fn prim_array_at_put(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    if args.len() < 2 {
+        return Err(EgoError::with_kind(prim_span(), "_ArrayAt:Put: requires two arguments".into(), ErrorKind::PrimitiveError));
+    }
+    let (idx_arg, val) = (args[0], args[1]);
+    let len = array_elems(recv, arena, "_ArrayAt:Put:")?.len();
+    let idx = as_index(idx_arg, len, arena, "_ArrayAt:Put:")?;
+    match &mut arena.get_mut(recv).kind {
+        ObjectKind::Array(v) => v[idx] = val,
+        _ => unreachable!("array_elems already validated recv is an Array"),
+    }
+    Ok(val)
+}
+
+/// Renders array elements without message dispatch — a bare `PrimFn` only
+/// has `Arena`/`RootSet`, not the full `Interpreter` needed to send
+/// `printString` to an arbitrary element (same limitation block `value`
+/// hits, see eval.rs). Known value kinds print their real content; anything
+/// else (plain user objects, methods, blocks) falls back to a placeholder.
+fn render_element(id: ObjectId, arena: &Arena, roots: &RootSet) -> String {
+    if id == roots.nil_id {
+        return "nil".to_string();
+    }
+    if id == roots.true_id {
+        return "true".to_string();
+    }
+    if id == roots.false_id {
+        return "false".to_string();
+    }
+    match &arena.get(id).kind {
+        ObjectKind::Integer(n) => n.to_string(),
+        ObjectKind::Float(f) => format_float(*f),
+        ObjectKind::StringVal(s) => s.to_string(),
+        ObjectKind::Array(elems) => {
+            let parts: Vec<String> = elems.iter().map(|&e| render_element(e, arena, roots)).collect();
+            format!("({})", parts.join(" "))
+        }
+        _ => "<object>".to_string(),
+    }
+}
+
+fn prim_array_print_string(
+    recv: ObjectId,
+    _args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let elems = array_elems(recv, arena, "_ArrayPrintString")?.to_vec();
+    let parts: Vec<String> = elems.iter().map(|&e| render_element(e, arena, roots)).collect();
+    Ok(make_string(format!("({})", parts.join(" ")), arena, roots))
+}
+
 fn prim_gc_collect(
     _recv: ObjectId,
     _args: &[ObjectId],
@@ -380,6 +502,12 @@ pub fn register_all(prims: &mut PrimitiveTable) {
     prims.register("_StringConcat:", prim_string_concat);
     prims.register("_PrintLine:", prim_print_line);
     prims.register("_GcCollect", prim_gc_collect);
+
+    prims.register("_ArrayNew:", prim_array_new);
+    prims.register("_ArraySize", prim_array_size);
+    prims.register("_ArrayAt:", prim_array_at);
+    prims.register("_ArrayAt:Put:", prim_array_at_put);
+    prims.register("_ArrayPrintString", prim_array_print_string);
 
     prims.register("_IntAdd:", prim_int_add);
     prims.register("_IntSub:", prim_int_sub);

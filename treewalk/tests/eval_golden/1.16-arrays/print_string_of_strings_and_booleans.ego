@@ -1,0 +1,1 @@
+(array new: 3) at: 1 Put: 'x'; at: 2 Put: true; at: 3 Put: nil; printString

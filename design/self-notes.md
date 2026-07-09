@@ -335,7 +335,10 @@ how objects are inspected and edited live.
 - The stratification principle is the load-bearing constraint: base objects
   must have no reflective methods (`respondsTo:` etc. are not on `object traits`).
 
-Spec section goes in `lang-spec.md` § Mirrors (pending; must precede substage 1.16).
+Spec section goes in `lang-spec.md` §11 Mirrors (done). Precedes substage
+1.17 — bumped from 1.16 once arrays (substage 1.16) turned out to be a
+prerequisite: `slotNames` returns an array, and nothing before mirrors
+introduced one.
 
 ---
 
@@ -522,7 +525,7 @@ ordinary send. This is intentional, not a gap: directed resend only earns
 its keep when a selector is reachable through *more than one* parent, and
 the built-in chain (`3 → integer_proto → int_trait`, one parent per link) is
 strictly linear — undirected `resend` already reaches the whole chain.
-Revisit when substage 1.16 (mirrors) lets user code attach a second parent
+Revisit when substage 1.17 (mirrors) lets user code attach a second parent
 to `integer_proto`/`float_proto`/`string_proto`, at which point ambiguity
 becomes possible and these slots should get a nameable slot name.
 
@@ -611,6 +614,35 @@ a future spec revision.
 
 ---
 
+## 13. Arrays
+
+Self's `array` is a primitive indexable object type baked directly into the
+VM (a variable-sized object whose "slots" are numerically indexed storage,
+not named data/var/method/parent slots) — not something built out of the
+ordinary slot model. Self also has `byteVector`/`objVector` distinctions and
+a much richer collection hierarchy (`orderedCollection`, `dictionary`,
+`set`, …) on top, per `stdlib.md` § Collections.
+
+**Ego stance — adopt the primitive-indexable shape, minimal Stage 1 slice.**
+
+- One `ObjectKind::Array(Vec<ObjectId>)` in the tree-walker; no
+  byte/object-vector distinction (ego has no byte-level types yet).
+- Fixed size, set at creation (`array new: n`); no resizing primitive.
+- 1-based indexing (`at:`/`at:Put:`), matching Self and `stdlib.md`.
+- Only `new:`, `at:`, `at:Put:`, `size`, `printString` at Stage 1 — same
+  precedent as strings getting only `,`/`printString` at substage 1.12
+  (§8 of `self-notes.md`... see the Strings row in `lang-spec.md` §8).
+  The full `stdlib.md` Array API (`do:`, `collect:`, `select:`, `detect:`,
+  …) needs blocks dispatched from inside a primitive, which the current
+  `PrimFn` signature (`Arena` + `RootSet` only, no `Interpreter`) can't do —
+  same limitation that pushed block `value`/`whileTrue:`/`on:Do:` into
+  `eval_send` special-casing instead of the primitive table. Deferred.
+- Added as substage 1.16, ahead of mirrors (1.17), purely because
+  `slotNames` needs an array to return — not because collections were
+  otherwise due this early.
+
+---
+
 ## Ego Adoption Summary
 
 | Self feature | Ego stance | Notes |
@@ -625,8 +657,9 @@ a future spec revision.
 | Block closure via activation-object chain | Adopt | Object literals lack this — see §2, §5 |
 | Object literal two-phase construction (lobby-scoped initializers) | Adopt | Spec in `lang-spec.md` §1 |
 | Lobby as root | Adopt | Not a universal ancestor of other objects — see §6 |
-| Cascades (`;`) | Adopt | Spec section pending |
+| Cascades (`;`) | Adopt | Spec in `lang-spec.md` §9 |
 | Mirror API (`reflect:`, stratified) | Adopt, simplified | No sub-mirrors in Stage 1 |
+| Arrays (primitive indexable object) | Adopt shape, minimal Stage 1 slice | Fixed-size only, no `do:`/`collect:`/… — see §13 |
 | `on:Do:` exception handling | Adopt | `ExceptionSet` deferred |
 | Binary-operator restriction, keyword capitalization/nesting | Adopt | See §11; implemented in parser |
 | String escapes, line continuation | Adopt | Documented, not yet implemented |

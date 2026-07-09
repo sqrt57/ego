@@ -2,7 +2,7 @@
 
 Design document for the Rust tree-walking interpreter. Covers crate layout,
 object model, GC, primitive dispatch, bootstrap, evaluator, REPL, diagnostics,
-and testing. Corresponds to ROADMAP substages 1.1–1.17.
+and testing. Corresponds to ROADMAP substages 1.1–1.18.
 
 **Scope:** No image. Every run parses source, loads `boot.ego`, evaluates, and
 discards the object graph on exit. The object graph lives in a managed arena; a
@@ -88,10 +88,11 @@ pub enum ObjectKind {
     Plain,
     Integer(i64),
     Float(f64),
-    BigInt(Box<BigInt>),        // num-bigint crate; added at substage 1.17
+    BigInt(Box<BigInt>),        // num-bigint crate; added at substage 1.18
     StringVal(Box<str>),
     Method(Rc<MethodDef>),
     Block(Box<BlockData>),
+    Array(Vec<ObjectId>),       // fixed-size, added at substage 1.16
 }
 ```
 
@@ -390,7 +391,7 @@ primitive name from a normal dispatch miss.
 
 | Selector | Arity | Notes |
 |---|---|---|
-| `_IntAdd:` | 1 | Promotes to BigInt on overflow (substage 1.17) |
+| `_IntAdd:` | 1 | Promotes to BigInt on overflow (substage 1.18) |
 | `_IntSub:` | 1 | |
 | `_IntMul:` | 1 | |
 | `_IntDiv:` | 1 | Signals `zeroDivide` |
@@ -418,6 +419,11 @@ primitive name from a normal dispatch miss.
 | `_BlockValue:Value:` | 2 | Activate two-arg block |
 | `_ObjectCopy` | 0 | Shallow clone: duplicate slot list, allocate fresh object |
 | `_ObjectEq:` | 0 | Identity comparison (`ObjectId` equality) |
+| `_ArrayNew:` | 1 | Fresh `n`-element array, all elements `nil`; signals `primitiveError` if `n` is negative or non-integer |
+| `_ArrayAt:` | 1 | Element at 1-based index; signals `primitiveError` if out of range |
+| `_ArrayAt:Put:` | 2 | Assign element at 1-based index; signals `primitiveError` if out of range |
+| `_ArraySize` | 0 | Element count |
+| `_ArrayPrintString` | 0 | Returns `StringVal`; renders `Integer`/`Float`/`StringVal`/nested `Array`/`nil`/`true`/`false` elements directly, other kinds as a placeholder (no message dispatch available from a bare `PrimFn`) |
 | `_MirrorOf:` | 1 | Return a mirror wrapping the argument |
 | `_MirrorSlotNames` | 0 | Receiver is a mirror; returns array of slot-name strings |
 | `_MirrorAt:` | 1 | Slot value by name string; signals `error` if absent |
@@ -443,10 +449,11 @@ Executed once at startup, before any user code:
 2. Allocate and register **permanent objects** by `ObjectId`:
    - `nil` (plain object, no slots initially)
    - `true`, `false` (plain objects, no slots initially)
-   - `integerProto`, `floatProto`, `stringProto`, `blockProto` (plain)
+   - `integerProto`, `floatProto`, `stringProto`, `blockProto`, `array` (plain;
+     `array`'s `new:` method is wired directly on it, not via a shared trait)
 3. Register all primitive functions in the primitive table.
 4. Allocate the **lobby** object; add data slots for `nil`, `true`, `false`, and
-   the four prototypes; add a `reflect:` method slot backed by `_MirrorOf:`.
+   the five prototypes; add a `reflect:` method slot backed by `_MirrorOf:`.
 5. Set the root set's `lobby`, `nil_id`, `true_id`, `false_id` fields.
 6. Parse and evaluate `boot.ego` against the lobby. `boot.ego` defines:
    - Trait objects (`booleanTrait`, `integerTrait`, `floatTrait`, `stringTrait`,
@@ -768,7 +775,7 @@ reclaimed and live objects are intact. These tests may inspect arena internals
 directly (white-box). Cover at minimum: cycles, objects referenced only through
 parent chains, blocks capturing variables.
 
-### Evaluator golden tests (substages 1.5–1.17)
+### Evaluator golden tests (substages 1.5–1.18)
 
 Each test: a `.ego` file in `tests/eval_golden/` plus a `.expected` file. The
 harness in `tests/eval_golden.rs` runs each `.ego` file through the interpreter,
@@ -782,7 +789,9 @@ tests/eval_golden/
   1.6-objects/
   1.7-var-slots/
   ...
-  1.17-bignums/
+  1.16-arrays/
+  1.17-mirrors/
+  1.18-bignums/
 ```
 
 This suite is the cross-stage regression guard. Stage 2 (bytecode VM) and

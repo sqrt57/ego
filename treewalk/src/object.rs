@@ -30,6 +30,9 @@ pub enum ObjectKind {
     /// name of the var slot it mutates. Not backed by AST or the primitive
     /// table since primitives are bare fn pointers with no per-slot state.
     VarSetter(String),
+    /// Fixed-size indexed sequence (substage 1.16). No byte/object-vector
+    /// distinction, unlike Self's VM-level array.
+    Array(Vec<ObjectId>),
 }
 
 #[derive(Debug)]

@@ -13,6 +13,7 @@ pub struct RootSet {
     pub float_proto: ObjectId,
     pub string_proto: ObjectId,
     pub block_proto: ObjectId,
+    pub array_proto: ObjectId,
     pub error_proto: ObjectId,
     pub message_not_understood_proto: ObjectId,
     pub bad_block_activation_proto: ObjectId,
@@ -33,6 +34,7 @@ impl RootSet {
             float_proto: NULL_ID,
             string_proto: NULL_ID,
             block_proto: NULL_ID,
+            array_proto: NULL_ID,
             error_proto: NULL_ID,
             message_not_understood_proto: NULL_ID,
             bad_block_activation_proto: NULL_ID,
@@ -87,6 +89,13 @@ pub fn collect(arena: &mut Arena, roots: &RootSet) {
                 for &val in env.values() {
                     if val != NULL_ID {
                         to_visit.push(val);
+                    }
+                }
+            }
+            if let ObjectKind::Array(elems) = &obj.kind {
+                for &e in elems {
+                    if e != NULL_ID {
+                        to_visit.push(e);
                     }
                 }
             }

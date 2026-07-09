@@ -373,6 +373,7 @@ The minimum needed to bootstrap:
 | Strings | Concatenation (`,`), `printString` |
 | Blocks | `value`, `value:`, `value:With:`, …, `whileTrue:` |
 | Exception prototypes | `error` (base type), `messageNotUnderstood`, `badBlockActivation`, `zeroDivide`, `primitiveError`; all respond to `signal` and `signal:` (§10) |
+| Arrays | Fixed-size indexed sequence: `array new: n`, `at:`, `at:Put:`, `size`, `printString` |
 
 All built-in objects respond to `copy` (shallow clone, as described in §1)
 and `printString` (returns a string representation). All built-in objects
@@ -380,6 +381,12 @@ except `nil` respond to `isNil` → `false` and `notNil` → `true`.
 
 Integer arithmetic promotes transparently to bignums on overflow. Mixed
 int/float expressions return float.
+
+`array new: n` returns a fresh array of `n` elements, each initialised to
+`nil`. Indexing is 1-based; `at:`/`at:Put:` signal `error` when the index is
+out of range. This is the minimal slice needed to bootstrap mirrors (§11);
+the richer collection API (`do:`, `collect:`, `OrderedCollection`,
+`Dictionary`, …) is specified in `stdlib.md` and deferred beyond Stage 1.
 
 ---
 

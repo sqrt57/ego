@@ -1,0 +1,7 @@
+[| inner <- 0. outer <- 0 |
+    inner <- array new: 2.
+    inner at: 1 Put: 1; at: 2 Put: 2.
+    outer <- array new: 2.
+    outer at: 1 Put: inner; at: 2 Put: 3.
+    outer printString
+] value
