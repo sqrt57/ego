@@ -891,7 +891,7 @@ pub fn eval_expr(
                 Object::new(ObjectKind::Integer(*n)),
             );
             interp.arena.get_mut(id).slots.push(Slot {
-                name: "parent*".to_string(),
+                name: "parent".to_string(),
                 kind: SlotKind::Parent,
                 value: interp.roots.integer_proto,
             });
@@ -904,7 +904,7 @@ pub fn eval_expr(
                 Object::new(ObjectKind::Float(*f)),
             );
             interp.arena.get_mut(id).slots.push(Slot {
-                name: "parent*".to_string(),
+                name: "parent".to_string(),
                 kind: SlotKind::Parent,
                 value: interp.roots.float_proto,
             });
@@ -917,7 +917,7 @@ pub fn eval_expr(
                 Object::new(ObjectKind::StringVal(s.as_str().into())),
             );
             interp.arena.get_mut(id).slots.push(Slot {
-                name: "parent*".to_string(),
+                name: "parent".to_string(),
                 kind: SlotKind::Parent,
                 value: interp.roots.string_proto,
             });
@@ -1048,7 +1048,7 @@ pub fn eval_expr(
                 Object::new(ObjectKind::Block(Box::new(block_data))),
             );
             interp.arena.get_mut(id).slots.push(Slot {
-                name: "parent*".to_string(),
+                name: "parent".to_string(),
                 kind: SlotKind::Parent,
                 value: interp.roots.block_proto,
             });

@@ -131,7 +131,7 @@ pub fn alloc_with_gc(arena: &mut Arena, roots: &RootSet, obj: Object) -> ObjectI
 pub fn make_string(s: impl Into<Box<str>>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into())));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.string_proto,
     });

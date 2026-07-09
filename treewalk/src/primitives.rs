@@ -160,7 +160,7 @@ fn div_zero_err() -> EgoError {
 fn make_int(n: i64, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Integer(n)));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.integer_proto,
     });
@@ -170,7 +170,7 @@ fn make_int(n: i64, arena: &mut Arena, roots: &RootSet) -> ObjectId {
 fn make_float(f: f64, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Float(f)));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.float_proto,
     });
@@ -399,7 +399,7 @@ fn prim_array_new(
     let elems = vec![roots.nil_id; n as usize];
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Array(elems)));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.array_proto,
     });
@@ -497,7 +497,7 @@ fn mirror_reflectee(id: ObjectId, arena: &Arena, ctx: &str) -> Result<ObjectId, 
 fn make_array(elems: Vec<ObjectId>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Array(elems)));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.array_proto,
     });
@@ -521,7 +521,7 @@ fn prim_mirror_of(
     let target = one_arg(args, "_MirrorOf:")?;
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Mirror(target)));
     arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
+        name: "parent".to_string(),
         kind: SlotKind::Parent,
         value: roots.mirror_proto,
     });

@@ -519,15 +519,25 @@ binary/keyword sends" section (`parse_keyword`/`parse_binary` in
 `parser.rs`).
 
 Built-in numeric/string prototypes give their instances a parent slot named
-literally `"parent*"` (asterisk included), which is not a producible
-`identifier` and so cannot be targeted by directed resend or written as an
-ordinary send. This is intentional, not a gap: directed resend only earns
-its keep when a selector is reachable through *more than one* parent, and
-the built-in chain (`3 → integer_proto → int_trait`, one parent per link) is
-strictly linear — undirected `resend` already reaches the whole chain.
-Revisit when substage 1.17 (mirrors) lets user code attach a second parent
-to `integer_proto`/`float_proto`/`string_proto`, at which point ambiguity
-becomes possible and these slots should get a nameable slot name.
+`"parent"` (a producible `identifier`, reachable via `parent.selector`
+directed resend). Earlier this slot was hardcoded in Rust as the literal
+`"parent*"` (asterisk baked into the stored name), which never matched — the
+parser strips the trailing `*` when it reads `ParentSlotDecl` from ego
+source, so any user-written `parent* = X` was already stored as bare
+`"parent"`; the Rust-constructed built-in slots just hadn't followed the
+same convention. Fixed post-1.17 (see `backlog.md`) by renaming every
+hardcoded built-in parent-slot name from `"parent*"` to `"parent"` across
+`bootstrap.rs`/`gc.rs`/`primitives.rs`/`eval.rs`.
+
+Directed resend only earns its keep when a selector is reachable through
+*more than one* parent, and the built-in chain (`3 → integer_proto →
+int_trait`, one parent per link) is strictly linear — undirected `resend`
+already reaches the whole chain either way. `_MirrorAddSlot:Value:`
+(substage 1.17) always creates a `SlotKind::Data` slot, never
+`SlotKind::Parent` (`primitives.rs`), so mirrors cannot yet attach a second
+*real* parent to a built-in proto — the multi-parent-ambiguity scenario
+remains theoretical, not live. Revisit if `addSlot:Value:` (or a future
+mirror primitive) is extended to create genuine parent-kind slots.
 
 ---
 

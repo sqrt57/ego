@@ -34,7 +34,7 @@ pub enum ObjectKind {
     /// distinction, unlike Self's VM-level array.
     Array(Vec<ObjectId>),
     /// Mirror wrapping a reflectee (substage 1.17). The mirror's own slots
-    /// (parent* to `mirror_proto`) are separate from the reflectee's —
+    /// (parent to `mirror_proto`) are separate from the reflectee's —
     /// stratification (lang-spec.md §11).
     Mirror(ObjectId),
 }

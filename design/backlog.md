@@ -132,21 +132,31 @@ collections/IO substage wires up `stdout`/`stderr`/`stdin` per `stdlib.md`;
 at that point add a golden or CLI test that drives real script output
 through `_PrintLine:`.
 
-## `parent*` on built-in protos is unreachable by directed resend — now that mirrors can add a second one
+## ~~`parent*` on built-in protos unreachable by directed resend~~ — fixed
 
-`self-notes.md` §11 (lines 521-530) notes that every built-in numeric/string
-prototype's parent slot is named literally `"parent*"` (asterisk included),
-which is not a producible `identifier` and so can't be targeted by directed
-resend or written as an ordinary send — deliberately fine as long as the
-built-in chain stays strictly linear (one parent per link), since undirected
-`resend` already reaches the whole chain unambiguously. That note explicitly
-flagged substage 1.17 (mirrors) as the point where this stops being purely
-hypothetical: `m addSlot:Value:`/`m at:Put:` (mirror API, `lang-spec.md` §11)
-can now attach or overwrite a second parent slot on `integer_proto` et al.
-from ordinary ego code, at which point a selector reachable through both
-parents becomes genuinely ambiguous with no way to directed-resend to either
-one by name. Substage 1.17 shipped (`0198668`) without addressing this —
-mirrors don't special-case `parent*`-named slots, so the gap is now live,
-not just theoretical. Revisit by giving built-in protos' parent slots a
-producible name (dropping the `*` convention, or reserving a distinct
-nameable alias) before relying on multi-parent built-ins anywhere.
+**Resolved.** The previous entry here claimed substage 1.17 (mirrors) made a
+built-in multi-parent ambiguity gap "live, not just theoretical," reasoning
+that `m addSlot:Value:`/`m at:Put:` could attach or overwrite a second parent
+slot on `integer_proto` et al. That premise doesn't hold up against the
+actual implementation: `_MirrorAddSlot:Value:` (`primitives.rs`) always
+creates a `SlotKind::Data` slot, never `SlotKind::Parent`, and
+`_MirrorAt:Put:` only overwrites an existing slot's `.value`, never its
+`.kind` — so mirrors cannot currently create a second *real* parent slot on
+anything. The ambiguity scenario remains theoretical.
+
+There was a real, separate bug though: built-in protos' parent slots were
+hardcoded in Rust as the literal string `"parent*"` (asterisk baked into the
+stored name), which could never match a directed-resend target — the parser
+strips the trailing `*` from `ParentSlotDecl` before storing the slot name,
+so a user-written `parent* = X` was already stored as bare `"parent"`; the
+Rust-side built-in construction just hadn't matched that convention. Fixed
+by renaming every hardcoded parent-slot name from `"parent*"` to `"parent"`
+across `bootstrap.rs`/`gc.rs`/`primitives.rs`/`eval.rs`. Verified via
+`(reflect: 3) slotNames printString` → `"(parent)"` (was unreachable
+`"(parent*)"` before). Full test suite green, no regressions. See
+`self-notes.md` §11 for the updated writeup.
+
+Still worth a future revisit if `addSlot:Value:` (or a new mirror primitive)
+is ever extended to create genuine `SlotKind::Parent` slots — at that point
+the naming-collision question (two parent slots on one object sharing a
+name) becomes live and would need its own decision.
