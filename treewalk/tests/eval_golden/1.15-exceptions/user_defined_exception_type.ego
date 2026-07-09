@@ -1,0 +1,2 @@
+myError <- (| parent* = error |).
+[myError signal: 'custom'] on: myError Do: [| :e | 'got: ', e messageText]

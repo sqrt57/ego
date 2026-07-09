@@ -1,0 +1,1 @@
+[[zeroDivide signal: 'inner'] on: zeroDivide Do: [| :e | e outer]] on: error Do: [| :e | 'outerCaught: ', e messageText]

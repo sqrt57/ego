@@ -1,0 +1,1 @@
+[1 + 1] on: zeroDivide Do: [| :e | 99]

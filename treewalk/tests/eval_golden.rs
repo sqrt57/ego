@@ -1,8 +1,36 @@
 use std::fs;
 use std::path::Path;
+use std::rc::Rc;
 
-use treewalk::bootstrap::bootstrap;
-use treewalk::eval::{eval_source_print, EgoSignal};
+use treewalk::bootstrap::{bootstrap, Interpreter};
+use treewalk::error::SourceSpan;
+use treewalk::eval::{eval_send, eval_source_print, EgoSignal};
+use treewalk::object::ObjectKind;
+
+/// Turns any `EgoSignal` into an `EgoError`-shaped (span, message) pair,
+/// reading an uncaught exception's `messageText` (lang-spec.md §10) the same
+/// way `signal:` set it. Keeps fatal-error assertions working unchanged now
+/// that built-in faults route through the exception mechanism instead of a
+/// plain `EgoSignal::Err`.
+fn signal_to_error(sig: EgoSignal, interp: &mut Interpreter) -> treewalk::error::EgoError {
+    match sig {
+        EgoSignal::Err(e) => e,
+        EgoSignal::Exception(exc_obj, span) => {
+            let lookup_span = SourceSpan::new(Rc::new("<test>".to_string()), 0, 0);
+            let text = match eval_send(exc_obj, "messageText", &[], &lookup_span, interp) {
+                Ok(id) => match &interp.arena.get(id).kind {
+                    ObjectKind::StringVal(s) => s.to_string(),
+                    _ => "an exception".to_string(),
+                },
+                Err(_) => "an exception".to_string(),
+            };
+            treewalk::error::EgoError::new(span, text)
+        }
+        EgoSignal::NonLocalReturn(_, _) => panic!("expected an error but got a non-local return escape"),
+        EgoSignal::HandlerUnwind(_, _) => panic!("expected an error but got a handler-unwind escape"),
+        EgoSignal::Resume(_) => panic!("expected an error but got a resume escape"),
+    }
+}
 
 fn run_golden_dir(dir: &str) {
     let test_dir = Path::new(dir);
@@ -25,15 +53,13 @@ fn run_golden_dir(dir: &str) {
         let mut interp = bootstrap()
             .unwrap_or_else(|e| panic!("bootstrap failed for {ego_path:?}: {e}"));
 
-        let result = eval_source_print(&source, &ego_path.to_string_lossy(), &mut interp)
-            .unwrap_or_else(|sig| {
-                let msg = match sig {
-                    EgoSignal::Err(e) => e.to_string(),
-                    EgoSignal::Exception(_) => "Exception raised".into(),
-                    EgoSignal::NonLocalReturn(_, _) => "Non-local return escaped".into(),
-                };
-                panic!("eval failed for {ego_path:?}: {msg}");
-            });
+        let result = match eval_source_print(&source, &ego_path.to_string_lossy(), &mut interp) {
+            Ok(v) => v,
+            Err(sig) => {
+                let e = signal_to_error(sig, &mut interp);
+                panic!("eval failed for {ego_path:?}: {}", e.message);
+            }
+        };
 
         let actual = result.unwrap_or_default();
         assert_eq!(
@@ -89,16 +115,16 @@ fn golden_1_14_cascades() {
     run_golden_dir("tests/eval_golden/1.14-cascades");
 }
 
+#[test]
+fn golden_1_15_exceptions() {
+    run_golden_dir("tests/eval_golden/1.15-exceptions");
+}
+
 fn eval_err_full(source: &str, filename: &str) -> treewalk::error::EgoError {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, filename, &mut interp) {
         Ok(v) => panic!("expected an error but got: {v:?}"),
-        Err(EgoSignal::Err(e)) => e,
-        Err(sig) => panic!("expected EgoSignal::Err but got a different signal: {}", match sig {
-            EgoSignal::Exception(_) => "Exception",
-            EgoSignal::NonLocalReturn(_, _) => "NonLocalReturn",
-            EgoSignal::Err(_) => unreachable!(),
-        }),
+        Err(sig) => signal_to_error(sig, &mut interp),
     }
 }
 
@@ -180,6 +206,32 @@ fn while_true_condition_must_be_boolean_is_fatal() {
 fn string_concat_with_non_string_argument_is_fatal() {
     let msg = eval_err("'foo' , 3");
     assert!(msg.contains("requires string"), "got: {msg}");
+}
+
+// ── Exception handling (substage 1.15) ──────────────────────────────────────
+
+#[test]
+fn signal_with_no_handler_is_fatal() {
+    let msg = eval_err("zeroDivide signal: 'boom'");
+    assert!(msg.contains("boom"), "got: {msg}");
+}
+
+#[test]
+fn non_matching_on_do_type_still_lets_exception_escape_fatal() {
+    let msg = eval_err("[1 / 0] on: messageNotUnderstood Do: [| :e | 'wrong']");
+    assert!(msg.contains("division by zero"), "got: {msg}");
+}
+
+#[test]
+fn resume_outside_a_handler_is_fatal() {
+    let msg = eval_err("zeroDivide resume: 1");
+    assert!(msg.contains("resume"), "got: {msg}");
+}
+
+#[test]
+fn return_outside_a_handler_is_fatal() {
+    let msg = eval_err("zeroDivide return: 1");
+    assert!(msg.contains("return"), "got: {msg}");
 }
 
 // ── Error location (substage 1.13) ──────────────────────────────────────────

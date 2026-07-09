@@ -1,0 +1,2 @@
+n <- 0.
+[n < 3 ifTrue: [zeroDivide signal]. n] on: zeroDivide Do: [| :e | n <- n + 1. e retry]

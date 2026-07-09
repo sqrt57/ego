@@ -1,0 +1,1 @@
+[[nonExistentMessage] on: zeroDivide Do: [| :e | 'wrong']] on: messageNotUnderstood Do: [| :e | 'right: ', e messageText]

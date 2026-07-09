@@ -5,7 +5,8 @@ use crate::arena::{Arena, ObjectId};
 use crate::ast::{Expr, ExprKind, Stmt, StmtKind};
 use crate::env::ActivationId;
 use crate::error::{EgoError, SourceSpan};
-use crate::gc::{alloc_with_gc, RootSet};
+use crate::eval::{HandlerFrame, HandlerId};
+use crate::gc::{alloc_with_gc, make_string, RootSet};
 use crate::lexer::lex;
 use crate::object::{MethodDef, Object, ObjectKind, Slot, SlotKind};
 use crate::parser::parse;
@@ -17,12 +18,25 @@ pub struct Interpreter {
     pub prims: PrimitiveTable,
     pub(crate) activation_counter: u64,
     pub(crate) live_activations: HashSet<ActivationId>,
+    /// Active `on:Do:` registrations, innermost last — see eval.rs's
+    /// exception-handling section.
+    pub(crate) handler_stack: Vec<HandlerFrame>,
+    pub(crate) handler_id_counter: u64,
+    /// Frame ids currently running their own handler block, innermost last —
+    /// what `return`/`return:`/`retry` target.
+    pub(crate) handler_invocation_stack: Vec<HandlerId>,
 }
 
 impl Interpreter {
     pub fn next_activation_id(&mut self) -> ActivationId {
         let id = ActivationId(self.activation_counter);
         self.activation_counter += 1;
+        id
+    }
+
+    pub fn next_handler_id(&mut self) -> HandlerId {
+        let id = self.handler_id_counter;
+        self.handler_id_counter += 1;
         id
     }
 }
@@ -135,6 +149,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let float_proto   = arena.alloc(Object::new(ObjectKind::Plain));
     let string_proto  = arena.alloc(Object::new(ObjectKind::Plain));
     let block_proto   = arena.alloc(Object::new(ObjectKind::Plain));
+    let error_proto                  = arena.alloc(Object::new(ObjectKind::Plain));
+    let message_not_understood_proto = arena.alloc(Object::new(ObjectKind::Plain));
+    let bad_block_activation_proto   = arena.alloc(Object::new(ObjectKind::Plain));
+    let zero_divide_proto            = arena.alloc(Object::new(ObjectKind::Plain));
+    let primitive_error_proto        = arena.alloc(Object::new(ObjectKind::Plain));
 
     roots.nil_id        = nil_id;
     roots.true_id       = true_id;
@@ -143,6 +162,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     roots.float_proto   = float_proto;
     roots.string_proto  = string_proto;
     roots.block_proto   = block_proto;
+    roots.error_proto                  = error_proto;
+    roots.message_not_understood_proto = message_not_understood_proto;
+    roots.bad_block_activation_proto   = bad_block_activation_proto;
+    roots.zero_divide_proto            = zero_divide_proto;
+    roots.primitive_error_proto        = primitive_error_proto;
 
     // Step 3: primitives
     let mut prims = PrimitiveTable::new();
@@ -158,6 +182,11 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         ("floatProto",   float_proto),
         ("stringProto",  string_proto),
         ("blockProto",   block_proto),
+        ("error",                  error_proto),
+        ("messageNotUnderstood",   message_not_understood_proto),
+        ("badBlockActivation",     bad_block_activation_proto),
+        ("zeroDivide",             zero_divide_proto),
+        ("primitiveError",         primitive_error_proto),
     ] {
         lobby.slots.push(Slot { name: name.to_string(), kind: SlotKind::Data, value: id });
     }
@@ -214,12 +243,14 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);
     let value_2_method = make_two_arg_prim_method("_BlockValue:Value:", &mut arena, &roots);
     let while_true_method = make_binary_prim_method("_BlockWhileTrue:", &mut arena, &roots);
+    let on_do_method = make_two_arg_prim_method("_BlockOn:Do:", &mut arena, &roots);
     let block_print = make_const_string_method("a Block", &mut arena, &roots);
     let mut block_trait_obj = Object::new(ObjectKind::Plain);
     block_trait_obj.slots.push(Slot { name: "value".to_string(), kind: SlotKind::Method, value: value_method });
     block_trait_obj.slots.push(Slot { name: "value:".to_string(), kind: SlotKind::Method, value: value_1_method });
     block_trait_obj.slots.push(Slot { name: "value:With:".to_string(), kind: SlotKind::Method, value: value_2_method });
     block_trait_obj.slots.push(Slot { name: "whileTrue:".to_string(), kind: SlotKind::Method, value: while_true_method });
+    block_trait_obj.slots.push(Slot { name: "on:Do:".to_string(), kind: SlotKind::Method, value: on_do_method });
     block_trait_obj.slots.push(Slot { name: "printString".to_string(), kind: SlotKind::Method, value: block_print });
     let block_trait = alloc_with_gc(&mut arena, &roots, block_trait_obj);
     arena.get_mut(block_proto).slots.push(Slot {
@@ -227,6 +258,59 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         kind: SlotKind::Parent,
         value: block_trait,
     });
+
+    // Exception handling (lang-spec.md §10): the five built-in exception
+    // types share one method trait (`signal`, `return`, `retry`, ...,
+    // forwarding to the `_Exc...` selectors intercepted in eval.rs) and each
+    // owns a `messageText` data slot, seeded with a sensible default and
+    // overwritten on every `signal:` (see `set_message_text_obj`).
+    let exc_signal = make_unary_prim_method("_ExcSignal", &mut arena, &roots);
+    let exc_signal_colon = make_binary_prim_method("_ExcSignal:", &mut arena, &roots);
+    let exc_return = make_unary_prim_method("_ExcReturn", &mut arena, &roots);
+    let exc_return_colon = make_binary_prim_method("_ExcReturn:", &mut arena, &roots);
+    let exc_retry = make_unary_prim_method("_ExcRetry", &mut arena, &roots);
+    let exc_resume = make_unary_prim_method("_ExcResume", &mut arena, &roots);
+    let exc_resume_colon = make_binary_prim_method("_ExcResume:", &mut arena, &roots);
+    let exc_outer = make_unary_prim_method("_ExcOuter", &mut arena, &roots);
+    let exc_print = make_unary_prim_method("messageText", &mut arena, &roots);
+    let mut exception_trait_obj = Object::new(ObjectKind::Plain);
+    for (name, method_obj) in [
+        ("signal", exc_signal),
+        ("signal:", exc_signal_colon),
+        ("return", exc_return),
+        ("return:", exc_return_colon),
+        ("retry", exc_retry),
+        ("resume", exc_resume),
+        ("resume:", exc_resume_colon),
+        ("outer", exc_outer),
+        ("printString", exc_print),
+    ] {
+        exception_trait_obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Method, value: method_obj });
+    }
+    let exception_trait = alloc_with_gc(&mut arena, &roots, exception_trait_obj);
+
+    arena.get_mut(error_proto).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: exception_trait,
+    });
+    for proto in [message_not_understood_proto, bad_block_activation_proto, zero_divide_proto, primitive_error_proto] {
+        arena.get_mut(proto).slots.push(Slot {
+            name: "parent*".to_string(),
+            kind: SlotKind::Parent,
+            value: error_proto,
+        });
+    }
+    for (proto, default_text) in [
+        (error_proto, "an error"),
+        (message_not_understood_proto, "message not understood"),
+        (bad_block_activation_proto, "non-local return to a dead activation"),
+        (zero_divide_proto, "division by zero"),
+        (primitive_error_proto, "a primitive operation failed"),
+    ] {
+        let text_id = make_string(default_text, &mut arena, &roots);
+        arena.get_mut(proto).slots.push(Slot { name: "messageText".to_string(), kind: SlotKind::Data, value: text_id });
+    }
 
     // Wire `true`/`false` control-flow methods via a shared trait: the
     // method bodies are identical for both singletons (forward self and any
@@ -285,6 +369,9 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         prims,
         activation_counter: 0,
         live_activations: HashSet::new(),
+        handler_stack: Vec::new(),
+        handler_id_counter: 0,
+        handler_invocation_stack: Vec::new(),
     };
 
     // Step 6: load boot.ego (currently just a comment; safe to parse+eval)
@@ -296,10 +383,14 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         let lobby = interp.roots.lobby;
         crate::eval::eval_program(&program, lobby, &mut interp).map_err(|sig| match sig {
             crate::eval::EgoSignal::Err(e) => e,
-            crate::eval::EgoSignal::Exception(_) =>
+            crate::eval::EgoSignal::Exception(_, _) =>
                 EgoError::new(bs_span(), "exception during boot.ego evaluation".into()),
             crate::eval::EgoSignal::NonLocalReturn(_, _) =>
                 EgoError::new(bs_span(), "non-local return escaped boot.ego".into()),
+            crate::eval::EgoSignal::HandlerUnwind(_, _) =>
+                EgoError::new(bs_span(), "exception handler escape leaked out of boot.ego".into()),
+            crate::eval::EgoSignal::Resume(_) =>
+                EgoError::new(bs_span(), "exception resume leaked out of boot.ego".into()),
         })?;
     }
 

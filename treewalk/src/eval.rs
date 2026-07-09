@@ -6,19 +6,52 @@ use crate::ast::{
 };
 use crate::bootstrap::Interpreter;
 use crate::env::{ActivationId, Env, env_new};
-use crate::error::{EgoError, SourceSpan};
-use crate::gc::alloc_with_gc;
+use crate::error::{EgoError, ErrorKind, SourceSpan};
+use crate::gc::{alloc_with_gc, make_string};
 use crate::lexer::lex;
 use crate::object::{BlockData, MethodDef, Object, ObjectKind, Slot, SlotKind};
 use crate::parser::parse;
 
 pub enum EgoSignal {
     Err(EgoError),
-    Exception(ObjectId),
+    /// An exception that unwound all the way to the top with no `on:Do:`
+    /// handler matching it — see `signal_exception`. Carries the span of the
+    /// `signal`/`signal:` send (or the equivalent built-in fault site), so
+    /// an uncaught exception still gets the file:line:column reporting
+    /// substage 1.13 built for `EgoSignal::Err`.
+    Exception(ObjectId, SourceSpan),
     NonLocalReturn(ActivationId, ObjectId),
+    /// `e return`/`e return:`/`e retry` (lang-spec.md §10): escapes to the
+    /// `on:Do:` activation identified by `HandlerId`, carrying what that
+    /// activation should do once unwinding reaches it.
+    HandlerUnwind(HandlerId, HandlerOutcome),
+    /// `e resume`/`e resume:`: escapes only as far as the `signal_exception`
+    /// call that invoked the currently-running handler, becoming that
+    /// call's result — i.e. the value `signal`/`signal:` returns to its
+    /// original caller.
+    Resume(ObjectId),
 }
 
 pub type EvalResult = Result<ObjectId, EgoSignal>;
+
+pub type HandlerId = u64;
+
+pub enum HandlerOutcome {
+    Return(ObjectId),
+    Retry,
+}
+
+/// One active `on:Do:` registration, live for the dynamic extent of running
+/// its protected block (lang-spec.md §10). `active` is turned off for the
+/// duration of running this frame's own `handler_block`, so a signal raised
+/// from inside the handler (including `e outer`/`e signal` re-raising the
+/// same exception) searches *past* it rather than re-entering it.
+pub struct HandlerFrame {
+    pub id: HandlerId,
+    pub exception_type: ObjectId,
+    pub handler_block: ObjectId,
+    pub active: bool,
+}
 
 pub struct Activation {
     pub id: ActivationId,
@@ -162,13 +195,45 @@ pub fn eval_send(
             return result;
         }
 
+        // `on:Do:` (lang-spec.md §10) needs to run the protected block, push
+        // a handler frame around it, and recurse into the evaluator to run
+        // the handler block on a match — same reason as the interceptions
+        // above.
+        if sel == "_BlockOn:Do:" && matches!(&interp.arena.get(recv).kind, ObjectKind::Block(_)) {
+            let roots_base = interp.roots.stack_roots.len();
+            interp.roots.stack_roots.push(recv);
+            for &arg in args {
+                interp.roots.stack_roots.push(arg);
+            }
+            let result = eval_on_do(recv, args[0], args[1], span, interp);
+            interp.roots.stack_roots.truncate(roots_base);
+            return result;
+        }
+
+        // Exception handler operations (`signal`, `signal:`, `return`,
+        // `return:`, `retry`, `resume`, `resume:`, `outer`) all need the
+        // handler stack on `Interpreter`, so they're intercepted here too
+        // rather than living in the plain `PrimFn` table.
+        if is_exc_op_selector(sel) {
+            let roots_base = interp.roots.stack_roots.len();
+            interp.roots.stack_roots.push(recv);
+            for &arg in args {
+                interp.roots.stack_roots.push(arg);
+            }
+            let result = eval_exc_op(sel, recv, args, span, interp);
+            interp.roots.stack_roots.truncate(roots_base);
+            return result;
+        }
+
         let prim_fn = match interp.prims.get(sel) {
             Some(f) => f,
             None => {
-                return Err(EgoSignal::Err(EgoError::new(
-                    span.clone(),
-                    format!("unknown primitive: {sel}"),
-                )));
+                return signal_builtin(
+                    ErrorKind::MessageNotUnderstood,
+                    format!("message not understood: {sel}"),
+                    span,
+                    interp,
+                );
             }
         };
         // Protect recv and args across the primitive call, which may alloc.
@@ -181,10 +246,19 @@ pub fn eval_send(
         // `Arena`/`RootSet`), so any error they raise carries a placeholder
         // `<primitive>:0:0` span (see `prim_span()` in primitives.rs). Stamp
         // it with the real call-site span here, the one place that has it.
-        let result = prim_fn(recv, args, &mut interp.arena, &mut interp.roots)
-            .map_err(|mut e| { e.span = span.clone(); EgoSignal::Err(e) });
+        let raw_result = prim_fn(recv, args, &mut interp.arena, &mut interp.roots);
         interp.roots.stack_roots.truncate(roots_base);
-        return result;
+        return match raw_result {
+            Ok(v) => Ok(v),
+            Err(mut e) => {
+                e.span = span.clone();
+                if e.kind == ErrorKind::Fatal {
+                    Err(EgoSignal::Err(e))
+                } else {
+                    signal_builtin(e.kind, e.message, &e.span, interp)
+                }
+            }
+        };
     }
 
     let lookup = lookup_slot(recv, sel, interp);
@@ -208,10 +282,12 @@ fn eval_resend(
     let owner = match activation.resend_start {
         Some(owner) => owner,
         None => {
-            return Err(EgoSignal::Err(EgoError::new(
-                span.clone(),
+            return signal_builtin(
+                ErrorKind::PrimitiveError,
                 "resend used outside a method".into(),
-            )));
+                span,
+                interp,
+            );
         }
     };
 
@@ -238,10 +314,12 @@ fn eval_resend(
             match parent_val {
                 Some(v) => lookup_in(v, sel, interp, &mut Vec::new()),
                 None => {
-                    return Err(EgoSignal::Err(EgoError::new(
-                        span.clone(),
+                    return signal_builtin(
+                        ErrorKind::PrimitiveError,
                         format!("directed resend: no parent slot named '{name}'"),
-                    )));
+                        span,
+                        interp,
+                    );
                 }
             }
         }
@@ -269,13 +347,15 @@ fn invoke_lookup(
         Ok(Some(SlotLookup::Value(val))) => Ok(val),
         Ok(Some(SlotLookup::VarSetter(owner, name))) => {
             if args.len() != 1 {
-                return Err(EgoSignal::Err(EgoError::new(
-                    span.clone(),
+                return signal_builtin(
+                    ErrorKind::PrimitiveError,
                     format!(
                         "wrong number of arguments: expected 1, got {}",
                         args.len()
                     ),
-                )));
+                    span,
+                    interp,
+                );
             }
             let new_val = args[0];
             let slot = interp
@@ -289,17 +369,21 @@ fn invoke_lookup(
                     s.value = new_val;
                     Ok(new_val)
                 }
-                None => Err(EgoSignal::Err(EgoError::new(
-                    span.clone(),
+                None => signal_builtin(
+                    ErrorKind::PrimitiveError,
                     format!("var slot not found: {name}"),
-                ))),
+                    span,
+                    interp,
+                ),
             }
         }
-        Ok(None) => Err(EgoSignal::Err(EgoError::new(
-            span.clone(),
+        Ok(None) => signal_builtin(
+            ErrorKind::MessageNotUnderstood,
             format!("message not understood: {sel}"),
-        ))),
-        Err(msg) => Err(EgoSignal::Err(EgoError::new(span.clone(), msg))),
+            span,
+            interp,
+        ),
+        Err(msg) => signal_builtin(ErrorKind::PrimitiveError, msg, span, interp),
     }
 }
 
@@ -312,14 +396,16 @@ fn eval_method(
     interp: &mut Interpreter,
 ) -> EvalResult {
     if args.len() != method_def.params.len() {
-        return Err(EgoSignal::Err(EgoError::new(
-            span.clone(),
+        return signal_builtin(
+            ErrorKind::PrimitiveError,
             format!(
                 "wrong number of arguments: expected {}, got {}",
                 method_def.params.len(),
                 args.len()
             ),
-        )));
+            span,
+            interp,
+        );
     }
 
     let id = interp.next_activation_id();
@@ -349,10 +435,13 @@ fn eval_method(
         Err(EgoSignal::NonLocalReturn(target, val)) if target == id => Ok(val),
         Err(EgoSignal::NonLocalReturn(target, val)) => {
             if !interp.live_activations.contains(&target) {
-                Err(EgoSignal::Err(EgoError::new(
-                    method_def.source.clone(),
+                let src = method_def.source.clone();
+                signal_builtin(
+                    ErrorKind::BadBlockActivation,
                     "block returned to a dead activation".into(),
-                )))
+                    &src,
+                    interp,
+                )
             } else {
                 Err(EgoSignal::NonLocalReturn(target, val))
             }
@@ -368,6 +457,12 @@ fn eval_method(
         Err(EgoSignal::Err(mut e)) if *e.span.file == "<bootstrap>" => {
             e.span = span.clone();
             Err(EgoSignal::Err(e))
+        }
+        // Same fixup as above, for a built-in fault signalled (rather than
+        // raised as a plain `EgoError`) from inside a bootstrap-synthesized
+        // method body.
+        Err(EgoSignal::Exception(exc_obj, sp)) if *sp.file == "<bootstrap>" => {
+            Err(EgoSignal::Exception(exc_obj, span.clone()))
         }
         Err(e) => Err(e),
     }
@@ -390,10 +485,12 @@ fn eval_block_while_true(recv: ObjectId, body: ObjectId, span: &SourceSpan, inte
         } else if cond == interp.roots.false_id {
             return Ok(interp.roots.nil_id);
         } else {
-            return Err(EgoSignal::Err(EgoError::new(
-                span.clone(),
+            return signal_builtin(
+                ErrorKind::PrimitiveError,
                 "whileTrue: condition block must evaluate to true or false".into(),
-            )));
+                span,
+                interp,
+            );
         }
     }
 }
@@ -451,6 +548,231 @@ fn eval_bool_control(recv: ObjectId, sel: &str, args: &[ObjectId], span: &Source
     }
 }
 
+// ── Exception handling (lang-spec.md §10) ───────────────────────────────────
+//
+// Exceptions are ordinary prototype objects — there is no separate
+// class/instance split, so the object passed to `signal`/`signal:` doubles
+// as the object handed to the handler block. Built-in faults (message not
+// understood, division by zero, ...) reuse this same machinery via
+// `signal_builtin`, which signals one of the five shared prototypes wired up
+// in `bootstrap.rs`.
+//
+// `on:Do:` pushes a `HandlerFrame` and runs the protected block; `signal`
+// searches `handler_stack` top-down for a matching *active* frame and calls
+// its handler block right there, without unwinding the Rust call stack. This
+// is what makes `resume`/`resume:` possible: the handler call is nested
+// inside `signal_exception`, so returning a value from it can simply become
+// `signal_exception`'s own return value. `return`/`return:`/`retry` instead
+// need to unwind multiple Rust frames back to the owning `on:Do:` — that
+// escape is `EgoSignal::HandlerUnwind`, threaded through exactly like
+// `NonLocalReturn` already is for `^`.
+
+fn is_exc_op_selector(sel: &str) -> bool {
+    matches!(
+        sel,
+        "_ExcSignal" | "_ExcSignal:" | "_ExcOuter" | "_ExcReturn" | "_ExcReturn:" | "_ExcRetry"
+            | "_ExcResume" | "_ExcResume:"
+    )
+}
+
+fn eval_exc_op(sel: &str, recv: ObjectId, args: &[ObjectId], span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    match sel {
+        "_ExcSignal" => signal_exception(recv, span, interp),
+        "_ExcSignal:" => {
+            set_message_text_obj(recv, args[0], interp);
+            signal_exception(recv, span, interp)
+        }
+        // `outer` continues the search from where `signal` left off: the
+        // current handler frame is already marked inactive (see
+        // `signal_exception` below), so re-running the same search from the
+        // top naturally skips it and finds the next enclosing match. Since
+        // matching only ever depends on the exception object's own type, not
+        // on which frame originally caught it, `e signal` (re-raise) would
+        // behave identically — the spec keeps them as separate handler
+        // operations, but ego doesn't need two implementations for one
+        // mechanism.
+        "_ExcOuter" => signal_exception(recv, span, interp),
+        "_ExcReturn" => {
+            let nil_id = interp.roots.nil_id;
+            handler_escape(interp, span, HandlerOutcome::Return(nil_id))
+        }
+        "_ExcReturn:" => handler_escape(interp, span, HandlerOutcome::Return(args[0])),
+        "_ExcRetry" => handler_escape(interp, span, HandlerOutcome::Retry),
+        "_ExcResume" => {
+            let nil_id = interp.roots.nil_id;
+            handler_resume(interp, span, nil_id)
+        }
+        "_ExcResume:" => handler_resume(interp, span, args[0]),
+        _ => unreachable!("is_exc_op_selector gates this match"),
+    }
+}
+
+/// `return`/`return:`/`retry` target the `on:Do:` frame currently running
+/// its handler — i.e. the top of `handler_invocation_stack` — wherever in
+/// the handler block's call tree they're actually sent from.
+fn handler_escape(interp: &Interpreter, span: &SourceSpan, outcome: HandlerOutcome) -> EvalResult {
+    match interp.handler_invocation_stack.last() {
+        Some(&frame_id) => Err(EgoSignal::HandlerUnwind(frame_id, outcome)),
+        None => Err(EgoSignal::Err(EgoError::new(
+            span.clone(),
+            "return/retry sent outside an exception handler".into(),
+        ))),
+    }
+}
+
+fn handler_resume(interp: &Interpreter, span: &SourceSpan, val: ObjectId) -> EvalResult {
+    if interp.handler_invocation_stack.is_empty() {
+        return Err(EgoSignal::Err(EgoError::new(
+            span.clone(),
+            "resume sent outside an exception handler".into(),
+        )));
+    }
+    Err(EgoSignal::Resume(val))
+}
+
+/// Upserts `exc_obj`'s own `messageText` slot to `text_id` — "own" because a
+/// user-defined exception type (`(| parent* = error |)`) starts out with no
+/// slot of its own, only inheriting `error`'s; the first `signal:` gives it
+/// one, exactly as if every exception object always had a private
+/// `messageText` data slot from the start.
+fn set_message_text_obj(exc_obj: ObjectId, text_id: ObjectId, interp: &mut Interpreter) {
+    let obj = interp.arena.get_mut(exc_obj);
+    match obj.slots.iter_mut().find(|s| s.kind != SlotKind::Parent && s.name == "messageText") {
+        Some(slot) => slot.value = text_id,
+        None => obj.slots.push(Slot { name: "messageText".to_string(), kind: SlotKind::Data, value: text_id }),
+    }
+}
+
+/// Is `exc_type` reachable from `exc_obj` through `exc_obj`'s own transitive
+/// parent chain (`exc_obj` itself counts, at depth zero)? This is the whole
+/// of ego's exception type hierarchy: types are plain objects, subtyping is
+/// just parent slots (lang-spec.md §10).
+fn exception_matches(exc_obj: ObjectId, exc_type: ObjectId, interp: &Interpreter) -> bool {
+    let mut visited: Vec<ObjectId> = Vec::new();
+    let mut stack = vec![exc_obj];
+    while let Some(id) = stack.pop() {
+        if id == exc_type {
+            return true;
+        }
+        if visited.contains(&id) {
+            continue;
+        }
+        visited.push(id);
+        for slot in &interp.arena.get(id).slots {
+            if slot.kind == SlotKind::Parent {
+                stack.push(slot.value);
+            }
+        }
+    }
+    false
+}
+
+/// Innermost-first search of `handler_stack` for an active frame whose
+/// registered type matches `exc_obj`.
+fn find_handler(exc_obj: ObjectId, interp: &Interpreter) -> Option<usize> {
+    (0..interp.handler_stack.len())
+        .rev()
+        .find(|&i| {
+            let frame = &interp.handler_stack[i];
+            frame.active && exception_matches(exc_obj, frame.exception_type, interp)
+        })
+}
+
+/// Core of `signal`/`signal:`/`outer`: finds the nearest active matching
+/// handler and calls it right here, at the signal site — not by unwinding
+/// the Rust stack. See the module-level comment above for why.
+fn signal_exception(exc_obj: ObjectId, span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    let idx = match find_handler(exc_obj, interp) {
+        Some(i) => i,
+        None => return Err(EgoSignal::Exception(exc_obj, span.clone())),
+    };
+    let frame_id = interp.handler_stack[idx].id;
+    let handler_block = interp.handler_stack[idx].handler_block;
+    interp.handler_stack[idx].active = false;
+    interp.handler_invocation_stack.push(frame_id);
+
+    let roots_base = interp.roots.stack_roots.len();
+    interp.roots.stack_roots.push(exc_obj);
+    interp.roots.stack_roots.push(handler_block);
+    let result = eval_send(handler_block, "value:", &[exc_obj], span, interp);
+    interp.roots.stack_roots.truncate(roots_base);
+
+    interp.handler_invocation_stack.pop();
+    // `idx` is still valid and still names this same frame: anything pushed
+    // to `handler_stack` during the handler call above (nested `on:Do:`) is
+    // popped again, in strict LIFO order, before control returns here.
+    if let Some(frame) = interp.handler_stack.get_mut(idx) {
+        frame.active = true;
+    }
+
+    match result {
+        // The handler exited normally — equivalent to `e return:` with the
+        // block's value (lang-spec.md §10), so unwind to its `on:Do:`.
+        Ok(v) => Err(EgoSignal::HandlerUnwind(frame_id, HandlerOutcome::Return(v))),
+        // `resume`/`resume:` escape only this far: their value becomes the
+        // result of the original `signal`/`signal:` send.
+        Err(EgoSignal::Resume(val)) => Ok(val),
+        // `return:`/`retry` (targeting this or an outer frame) and any
+        // ordinary error/non-local-return pass straight through.
+        Err(other) => Err(other),
+    }
+}
+
+fn builtin_exc_proto(kind: ErrorKind, interp: &Interpreter) -> ObjectId {
+    match kind {
+        ErrorKind::MessageNotUnderstood => interp.roots.message_not_understood_proto,
+        ErrorKind::BadBlockActivation => interp.roots.bad_block_activation_proto,
+        ErrorKind::ZeroDivide => interp.roots.zero_divide_proto,
+        ErrorKind::PrimitiveError => interp.roots.primitive_error_proto,
+        ErrorKind::Fatal => unreachable!("signal_builtin is never called with ErrorKind::Fatal"),
+    }
+}
+
+/// Signals one of the five built-in exception prototypes (lang-spec.md §10)
+/// with `message` as its `messageText`, going through the same handler
+/// search as a user `signal:` send. Used at every runtime fault site that a
+/// well-formed program can trigger (as opposed to lexer/parser failures and
+/// internal-bug guards, which stay a plain uncatchable `EgoSignal::Err`).
+fn signal_builtin(kind: ErrorKind, message: String, span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    let exc_obj = builtin_exc_proto(kind, interp);
+    let text_id = make_string(message, &mut interp.arena, &interp.roots);
+    set_message_text_obj(exc_obj, text_id, interp);
+    signal_exception(exc_obj, span, interp)
+}
+
+/// `on:Do:` (lang-spec.md §10): pushes a handler frame, runs the protected
+/// block, and loops back (re-pushing a fresh frame) on `retry`.
+fn eval_on_do(
+    protected: ObjectId,
+    exc_type: ObjectId,
+    handler: ObjectId,
+    span: &SourceSpan,
+    interp: &mut Interpreter,
+) -> EvalResult {
+    let frame_id = interp.next_handler_id();
+    loop {
+        interp.handler_stack.push(HandlerFrame {
+            id: frame_id,
+            exception_type: exc_type,
+            handler_block: handler,
+            active: true,
+        });
+        let result = eval_send(protected, "value", &[], span, interp);
+        // Always our own frame: pushed just above, and every nested push
+        // during the protected block's evaluation is popped again before
+        // its own `eval_send` returns (strict LIFO nesting).
+        interp.handler_stack.pop();
+        match result {
+            Ok(v) => return Ok(v),
+            Err(EgoSignal::HandlerUnwind(target, outcome)) if target == frame_id => match outcome {
+                HandlerOutcome::Return(v) => return Ok(v),
+                HandlerOutcome::Retry => continue,
+            },
+            Err(other) => return Err(other),
+        }
+    }
+}
+
 /// Activates a block: binds `args` to the block's own param names and
 /// evaluates its locals' initializers, both directly into `captures` (the
 /// shared env from the point the block literal was evaluated — see
@@ -470,18 +792,20 @@ fn eval_bool_control(recv: ObjectId, sel: &str, args: &[ObjectId], span: &Source
 fn eval_block_call(block_id: ObjectId, args: &[ObjectId], span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
     let block: BlockData = match &interp.arena.get(block_id).kind {
         ObjectKind::Block(b) => (**b).clone(),
-        _ => return Err(EgoSignal::Err(EgoError::new(span.clone(), "not a block".into()))),
+        _ => return signal_builtin(ErrorKind::PrimitiveError, "not a block".into(), span, interp),
     };
 
     if args.len() != block.lit.params.len() {
-        return Err(EgoSignal::Err(EgoError::new(
-            span.clone(),
+        return signal_builtin(
+            ErrorKind::PrimitiveError,
             format!(
                 "wrong number of arguments: expected {}, got {}",
                 block.lit.params.len(),
                 args.len()
             ),
-        )));
+            span,
+            interp,
+        );
     }
 
     for (param, &arg) in block.lit.params.iter().zip(args.iter()) {
@@ -506,10 +830,12 @@ fn eval_block_call(block_id: ObjectId, args: &[ObjectId], span: &SourceSpan, int
             if interp.live_activations.contains(&target) {
                 Err(EgoSignal::NonLocalReturn(target, val))
             } else {
-                Err(EgoSignal::Err(EgoError::new(
-                    span.clone(),
+                signal_builtin(
+                    ErrorKind::BadBlockActivation,
                     "non-local return to a dead activation (badBlockActivation)".into(),
-                )))
+                    span,
+                    interp,
+                )
             }
         }
         Err(e) => Err(e),

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::arena::{Arena, ObjectId};
-use crate::error::{EgoError, SourceSpan};
-use crate::gc::{alloc_with_gc, collect, RootSet};
+use crate::error::{EgoError, ErrorKind, SourceSpan};
+use crate::gc::{alloc_with_gc, collect, make_string, RootSet};
 use crate::object::{Object, ObjectKind, Slot, SlotKind};
 
 pub type PrimFn = fn(
@@ -43,7 +43,7 @@ fn prim_int_print_string(
 ) -> Result<ObjectId, EgoError> {
     let n = match arena.get(recv).kind {
         ObjectKind::Integer(n) => n,
-        _ => return Err(EgoError::new(prim_span(), "_IntPrintString requires integer receiver".into())),
+        _ => return Err(EgoError::with_kind(prim_span(), "_IntPrintString requires integer receiver".into(), ErrorKind::PrimitiveError)),
     };
     let s: Box<str> = n.to_string().into_boxed_str();
     Ok(alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s))))
@@ -57,7 +57,7 @@ fn prim_float_print_string(
 ) -> Result<ObjectId, EgoError> {
     let f = match arena.get(recv).kind {
         ObjectKind::Float(f) => f,
-        _ => return Err(EgoError::new(prim_span(), "_FloatPrintString requires float receiver".into())),
+        _ => return Err(EgoError::with_kind(prim_span(), "_FloatPrintString requires float receiver".into(), ErrorKind::PrimitiveError)),
     };
     let s = format_float(f);
     Ok(alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into_boxed_str()))))
@@ -84,19 +84,10 @@ fn prim_string_print_string(
 fn as_string<'a>(id: ObjectId, arena: &'a Arena, ctx: &str) -> Result<&'a str, EgoError> {
     match &arena.get(id).kind {
         ObjectKind::StringVal(s) => Ok(s),
-        _ => Err(EgoError::new(prim_span(), format!("{ctx} requires string receiver"))),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires string receiver"), ErrorKind::PrimitiveError)),
     }
 }
 
-fn make_string(s: String, arena: &mut Arena, roots: &RootSet) -> ObjectId {
-    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into_boxed_str())));
-    arena.get_mut(id).slots.push(Slot {
-        name: "parent*".to_string(),
-        kind: SlotKind::Parent,
-        value: roots.string_proto,
-    });
-    id
-}
 
 fn prim_string_concat(
     recv: ObjectId,
@@ -129,14 +120,14 @@ impl Num {
 fn as_int(id: ObjectId, arena: &Arena, ctx: &str) -> Result<i64, EgoError> {
     match arena.get(id).kind {
         ObjectKind::Integer(n) => Ok(n),
-        _ => Err(EgoError::new(prim_span(), format!("{ctx} requires integer receiver"))),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires integer receiver"), ErrorKind::PrimitiveError)),
     }
 }
 
 fn as_float(id: ObjectId, arena: &Arena, ctx: &str) -> Result<f64, EgoError> {
     match arena.get(id).kind {
         ObjectKind::Float(f) => Ok(f),
-        _ => Err(EgoError::new(prim_span(), format!("{ctx} requires float receiver"))),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires float receiver"), ErrorKind::PrimitiveError)),
     }
 }
 
@@ -144,20 +135,26 @@ fn as_num(id: ObjectId, arena: &Arena, ctx: &str) -> Result<Num, EgoError> {
     match arena.get(id).kind {
         ObjectKind::Integer(n) => Ok(Num::Int(n)),
         ObjectKind::Float(f) => Ok(Num::Float(f)),
-        _ => Err(EgoError::new(prim_span(), format!("{ctx} requires a numeric argument"))),
+        _ => Err(EgoError::with_kind(prim_span(), format!("{ctx} requires a numeric argument"), ErrorKind::PrimitiveError)),
     }
 }
 
 fn one_arg(args: &[ObjectId], ctx: &str) -> Result<ObjectId, EgoError> {
-    args.first().copied().ok_or_else(|| EgoError::new(prim_span(), format!("{ctx} requires one argument")))
+    args.first().copied().ok_or_else(|| {
+        EgoError::with_kind(prim_span(), format!("{ctx} requires one argument"), ErrorKind::PrimitiveError)
+    })
 }
 
 fn overflow_err() -> EgoError {
-    EgoError::new(prim_span(), "integer overflow (bignum promotion not implemented until substage 1.17)".into())
+    EgoError::with_kind(
+        prim_span(),
+        "integer overflow (bignum promotion not implemented until substage 1.17)".into(),
+        ErrorKind::PrimitiveError,
+    )
 }
 
 fn div_zero_err() -> EgoError {
-    EgoError::new(prim_span(), "division by zero".into())
+    EgoError::with_kind(prim_span(), "division by zero".into(), ErrorKind::ZeroDivide)
 }
 
 fn make_int(n: i64, arena: &mut Arena, roots: &RootSet) -> ObjectId {
@@ -355,14 +352,14 @@ fn prim_print_line(
     roots: &mut RootSet,
 ) -> Result<ObjectId, EgoError> {
     if args.is_empty() {
-        return Err(EgoError::new(prim_span(), "_PrintLine: requires an argument".into()));
+        return Err(EgoError::with_kind(prim_span(), "_PrintLine: requires an argument".into(), ErrorKind::PrimitiveError));
     }
     match &arena.get(args[0]).kind {
         ObjectKind::StringVal(s) => {
             println!("{s}");
             Ok(roots.nil_id)
         }
-        _ => Err(EgoError::new(prim_span(), "_PrintLine: requires a string argument".into())),
+        _ => Err(EgoError::with_kind(prim_span(), "_PrintLine: requires a string argument".into(), ErrorKind::PrimitiveError)),
     }
 }
 

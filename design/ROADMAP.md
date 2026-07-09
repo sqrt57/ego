@@ -173,7 +173,7 @@ collection add: 1; add: 2; add: 3.
 
 Spec: [lang-spec.md](lang-spec.md#9-cascades).
 
-### Substage 1.15 — Evaluator: exception handling
+### Substage 1.15 — Evaluator: exception handling ✓
 
 Message-based exception handling consistent with Self: `[...] on: E Do: [:e | ...]`
 as a keyword message sent to a block. Exception types are prototype objects.
@@ -181,8 +181,7 @@ Handlers are blocks receiving the exception object, which can be resumed,
 retried, or re-raised via messages. Built-in signals: message not understood,
 dead non-local return, arithmetic errors.
 
-Spec: [lang-spec.md](lang-spec.md) — section to be written before this
-substage begins.
+Spec: [lang-spec.md §10](lang-spec.md#10-exception-handling).
 
 ### Substage 1.16 — Evaluator: mirror-based reflection
 
@@ -190,8 +189,7 @@ Mirror objects for introspective access to an object's slots — read slot
 names and values, add or remove slots, without building these operations
 into the core message dispatch. Mirrors keep the base object model clean.
 
-Spec: [lang-spec.md](lang-spec.md) — section to be written before this
-substage begins.
+Spec: [lang-spec.md §11](lang-spec.md#11-mirrors).
 
 ### Substage 1.17 — Evaluator: bignums
 

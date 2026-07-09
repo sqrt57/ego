@@ -1,7 +1,10 @@
 use std::io::{self, BufRead, Write};
+use std::rc::Rc;
 
-use treewalk::bootstrap::bootstrap;
-use treewalk::eval::{eval_source_print, eval_source_run, EgoSignal};
+use treewalk::bootstrap::{bootstrap, Interpreter};
+use treewalk::error::SourceSpan;
+use treewalk::eval::{eval_send, eval_source_print, eval_source_run, EgoSignal};
+use treewalk::object::ObjectKind;
 
 enum Fragment {
     Eval(String),
@@ -59,11 +62,28 @@ fn parse_args(args: &[String]) -> CliMode {
     }
 }
 
-fn print_signal(sig: EgoSignal) {
+/// Formats an uncaught exception (no `on:Do:` matched it — lang-spec.md
+/// §10) by reading its `messageText`, the same slot `signal:` sets, and
+/// reusing `EgoError`'s `file:line:column: error: ...` rendering for `span`.
+fn exception_error(exc_obj: treewalk::arena::ObjectId, span: SourceSpan, interp: &mut Interpreter) -> treewalk::error::EgoError {
+    let lookup_span = SourceSpan::new(Rc::new("<error>".to_string()), 0, 0);
+    let text = match eval_send(exc_obj, "messageText", &[], &lookup_span, interp) {
+        Ok(id) => match &interp.arena.get(id).kind {
+            ObjectKind::StringVal(s) => s.to_string(),
+            _ => "an exception".to_string(),
+        },
+        Err(_) => "an exception".to_string(),
+    };
+    treewalk::error::EgoError::new(span, text)
+}
+
+fn print_signal(sig: EgoSignal, interp: &mut Interpreter) {
     match sig {
         EgoSignal::Err(e) => eprintln!("{e}"),
-        EgoSignal::Exception(_) => eprintln!("Exception raised"),
+        EgoSignal::Exception(exc_obj, span) => eprintln!("{}", exception_error(exc_obj, span, interp)),
         EgoSignal::NonLocalReturn(_, _) => eprintln!("Non-local return escaped activation"),
+        EgoSignal::HandlerUnwind(_, _) => eprintln!("exception handler escape leaked to top level"),
+        EgoSignal::Resume(_) => eprintln!("exception resume leaked to top level"),
     }
 }
 
@@ -127,7 +147,7 @@ fn run_repl(interp: &mut treewalk::bootstrap::Interpreter) {
                 match eval_source_print(&trimmed, "<repl>", interp) {
                     Ok(Some(s)) => println!("{s}"),
                     Ok(None) => {}
-                    Err(sig) => print_signal(sig),
+                    Err(sig) => print_signal(sig, interp),
                 }
             }
             input.clear();
@@ -187,14 +207,14 @@ fn main() {
                     Fragment::Eval(code) => {
                         if has_files {
                             if let Err(sig) = eval_source_run(&code, "<eval>", &mut interp) {
-                                print_signal(sig);
+                                print_signal(sig, &mut interp);
                                 std::process::exit(1);
                             }
                         } else {
                             match eval_source_print(&code, "<eval>", &mut interp) {
                                 Ok(Some(s)) => println!("{s}"),
                                 Ok(None) => {}
-                                Err(sig) => { print_signal(sig); std::process::exit(1); }
+                                Err(sig) => { print_signal(sig, &mut interp); std::process::exit(1); }
                             }
                         }
                     }
@@ -204,7 +224,7 @@ fn main() {
                             Err(e) => { eprintln!("{path}: {e}"); std::process::exit(1); }
                         };
                         if let Err(sig) = eval_source_run(&src, &path, &mut interp) {
-                            print_signal(sig);
+                            print_signal(sig, &mut interp);
                             std::process::exit(1);
                         }
                     }

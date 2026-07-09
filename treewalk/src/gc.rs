@@ -1,6 +1,6 @@
 use crate::arena::{Arena, ObjectId, NULL_ID};
 use crate::env::Env;
-use crate::object::{Object, ObjectKind};
+use crate::object::{Object, ObjectKind, Slot, SlotKind};
 
 pub const GC_THRESHOLD: usize = 4096;
 
@@ -13,6 +13,11 @@ pub struct RootSet {
     pub float_proto: ObjectId,
     pub string_proto: ObjectId,
     pub block_proto: ObjectId,
+    pub error_proto: ObjectId,
+    pub message_not_understood_proto: ObjectId,
+    pub bad_block_activation_proto: ObjectId,
+    pub zero_divide_proto: ObjectId,
+    pub primitive_error_proto: ObjectId,
     pub stack_roots: Vec<ObjectId>,
     pub activation_envs: Vec<Env>,
 }
@@ -28,6 +33,11 @@ impl RootSet {
             float_proto: NULL_ID,
             string_proto: NULL_ID,
             block_proto: NULL_ID,
+            error_proto: NULL_ID,
+            message_not_understood_proto: NULL_ID,
+            bad_block_activation_proto: NULL_ID,
+            zero_divide_proto: NULL_ID,
+            primitive_error_proto: NULL_ID,
             stack_roots: Vec::new(),
             activation_envs: Vec::new(),
         }
@@ -97,6 +107,19 @@ pub fn alloc_with_gc(arena: &mut Arena, roots: &RootSet, obj: Object) -> ObjectI
         collect(arena, roots);
     }
     arena.alloc(obj)
+}
+
+/// Allocates a string object with `string_proto` wired as its parent, the
+/// same steps every string-producing site (literals, concatenation,
+/// exception messageText) needs to repeat.
+pub fn make_string(s: impl Into<Box<str>>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into())));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.string_proto,
+    });
+    id
 }
 
 fn push_if_valid(worklist: &mut Vec<ObjectId>, id: ObjectId) {

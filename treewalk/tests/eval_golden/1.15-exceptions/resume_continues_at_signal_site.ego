@@ -1,0 +1,1 @@
+[(zeroDivide signal: 'boom') + 1] on: zeroDivide Do: [| :e | e resume: 41]
