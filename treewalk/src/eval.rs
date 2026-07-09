@@ -177,8 +177,12 @@ pub fn eval_send(
         for &arg in args {
             interp.roots.stack_roots.push(arg);
         }
+        // Primitives have no access to source spans (`PrimFn` only threads
+        // `Arena`/`RootSet`), so any error they raise carries a placeholder
+        // `<primitive>:0:0` span (see `prim_span()` in primitives.rs). Stamp
+        // it with the real call-site span here, the one place that has it.
         let result = prim_fn(recv, args, &mut interp.arena, &mut interp.roots)
-            .map_err(EgoSignal::Err);
+            .map_err(|mut e| { e.span = span.clone(); EgoSignal::Err(e) });
         interp.roots.stack_roots.truncate(roots_base);
         return result;
     }
@@ -352,6 +356,18 @@ fn eval_method(
             } else {
                 Err(EgoSignal::NonLocalReturn(target, val))
             }
+        }
+        // Bootstrap-synthesized methods (`+`, `/`, etc. — see
+        // `make_unary_prim_method`/`make_binary_prim_method` in bootstrap.rs)
+        // have no real source text, so their body carries a placeholder
+        // `<bootstrap>:0:0` span. An error raised there is only meaningful
+        // at the real call site, which is `span` here — unlike a genuine
+        // user-defined method body, whose own per-statement spans should be
+        // kept as-is (an error inside the user's method should point inside
+        // it, not at the call site).
+        Err(EgoSignal::Err(mut e)) if *e.span.file == "<bootstrap>" => {
+            e.span = span.clone();
+            Err(EgoSignal::Err(e))
         }
         Err(e) => Err(e),
     }

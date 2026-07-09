@@ -155,7 +155,7 @@ String literals, `,` concatenation, `printString` on all built-in types.
 Spec: [§ Literals](lang-spec.md#4-literals),
 [§ Built-in Objects](lang-spec.md#8-built-in-objects).
 
-### Substage 1.13 — Script files and error reporting
+### Substage 1.13 — Script files and error reporting ✓
 
 Running `.ego` files from the CLI, `line:column:` error diagnostics with
 source location tracking through lexer, parser, and evaluator.

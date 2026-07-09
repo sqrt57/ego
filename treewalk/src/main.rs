@@ -49,12 +49,6 @@ fn parse_args(args: &[String]) -> CliMode {
         }
     }
 
-    let has_eval = fragments.iter().any(|f| matches!(f, Fragment::Eval(_)));
-    let has_files = fragments.iter().any(|f| matches!(f, Fragment::File(_)));
-    if has_eval && has_files {
-        return CliMode::BadArgs("-e and file arguments cannot be combined".to_string());
-    }
-
     match (repl, version, help, fragments.is_empty()) {
         (true, false, false, true) => CliMode::Repl,
         (false, true, false, true) => CliMode::Version,
@@ -182,13 +176,26 @@ fn main() {
         CliMode::BadArgs(_) | CliMode::Version | CliMode::Help => unreachable!(),
         CliMode::Repl => run_repl(&mut interp),
         CliMode::Fragments(fragments) => {
+            // Mixing in a file switches the whole invocation to script rules:
+            // no fragment auto-prints, not even `-e` ones (cli.md "Mixed eval
+            // and files"). With no files, each `-e` fragment prints its own
+            // final expression, matching the plain inline-eval mode.
+            let has_files = fragments.iter().any(|f| matches!(f, Fragment::File(_)));
+
             for fragment in fragments {
                 match fragment {
                     Fragment::Eval(code) => {
-                        match eval_source_print(&code, "<eval>", &mut interp) {
-                            Ok(Some(s)) => println!("{s}"),
-                            Ok(None) => {}
-                            Err(sig) => { print_signal(sig); std::process::exit(1); }
+                        if has_files {
+                            if let Err(sig) = eval_source_run(&code, "<eval>", &mut interp) {
+                                print_signal(sig);
+                                std::process::exit(1);
+                            }
+                        } else {
+                            match eval_source_print(&code, "<eval>", &mut interp) {
+                                Ok(Some(s)) => println!("{s}"),
+                                Ok(None) => {}
+                                Err(sig) => { print_signal(sig); std::process::exit(1); }
+                            }
                         }
                     }
                     Fragment::File(path) => {

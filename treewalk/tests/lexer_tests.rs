@@ -20,6 +20,15 @@ fn lex_err(source: &str) -> String {
         .message
 }
 
+/// (line, column) of each token's start, 1-based.
+fn spans(source: &str) -> Vec<(u32, u32)> {
+    lex(source, file())
+        .expect("unexpected lex error")
+        .into_iter()
+        .map(|t| (t.span.line, t.span.column))
+        .collect()
+}
+
 // ── Integers ───────────────────────────────────────────────────────────────
 
 #[rstest]
@@ -421,4 +430,59 @@ fn annotation_delimiters() {
 fn unexpected_char_error() {
     assert!(lex_err("\\").contains("unexpected character"));
     assert!(lex_err("#").contains("unexpected character"));
+}
+
+// ── Source spans (line/column tracking) ─────────────────────────────────────
+
+#[test]
+fn span_single_line() {
+    // `foo bar baz`  — columns advance by token width plus one space.
+    assert_eq!(
+        spans("foo bar baz"),
+        vec![(1, 1), (1, 5), (1, 9)]
+    );
+}
+
+#[test]
+fn span_advances_across_newlines() {
+    let src = "foo\nbar\n  baz";
+    assert_eq!(
+        spans(src),
+        vec![(1, 1), (2, 1), (3, 3)]
+    );
+}
+
+#[test]
+fn span_resets_column_after_newline() {
+    assert_eq!(spans("foo\nbarbaz"), vec![(1, 1), (2, 1)]);
+}
+
+#[test]
+fn span_skips_leading_and_interior_whitespace() {
+    assert_eq!(spans("   foo   bar"), vec![(1, 4), (1, 10)]);
+}
+
+#[test]
+fn span_after_comment_spanning_lines() {
+    // Comment runs from line 1 into line 2; `foo` starts right after it.
+    let src = "\"first\nsecond\" foo";
+    assert_eq!(spans(src), vec![(2, 9)]);
+}
+
+#[test]
+fn span_after_multiline_string() {
+    let src = "'ab\ncd' foo";
+    assert_eq!(spans(src), vec![(1, 1), (2, 5)]);
+}
+
+#[test]
+fn span_error_location_mid_line() {
+    let e = lex("foo #", file()).expect_err("expected error");
+    assert_eq!((e.span.line, e.span.column), (1, 5));
+}
+
+#[test]
+fn span_error_location_on_later_line() {
+    let e = lex("foo\nbar #", file()).expect_err("expected error");
+    assert_eq!((e.span.line, e.span.column), (2, 5));
 }

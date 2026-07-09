@@ -84,17 +84,21 @@ fn golden_1_12_strings() {
     run_golden_dir("tests/eval_golden/1.12-strings");
 }
 
-fn eval_err(source: &str) -> String {
+fn eval_err_full(source: &str, filename: &str) -> treewalk::error::EgoError {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
-    match eval_source_print(source, "<test>", &mut interp) {
+    match eval_source_print(source, filename, &mut interp) {
         Ok(v) => panic!("expected an error but got: {v:?}"),
-        Err(EgoSignal::Err(e)) => e.message,
+        Err(EgoSignal::Err(e)) => e,
         Err(sig) => panic!("expected EgoSignal::Err but got a different signal: {}", match sig {
             EgoSignal::Exception(_) => "Exception",
             EgoSignal::NonLocalReturn(_, _) => "NonLocalReturn",
             EgoSignal::Err(_) => unreachable!(),
         }),
     }
+}
+
+fn eval_err(source: &str) -> String {
+    eval_err_full(source, "<test>").message
 }
 
 #[test]
@@ -171,4 +175,27 @@ fn while_true_condition_must_be_boolean_is_fatal() {
 fn string_concat_with_non_string_argument_is_fatal() {
     let msg = eval_err("'foo' , 3");
     assert!(msg.contains("requires string"), "got: {msg}");
+}
+
+// ── Error location (substage 1.13) ──────────────────────────────────────────
+
+#[test]
+fn error_display_matches_file_line_column_format() {
+    // BinarySend's span is the operator's position: "1 / 0" -> `/` at column 3.
+    let e = eval_err_full("1 / 0", "path/to/file.ego");
+    assert_eq!(e.to_string(), "path/to/file.ego:1:3: error: division by zero");
+}
+
+#[test]
+fn error_span_points_to_the_line_and_column_of_the_failing_send() {
+    // The error must point at `foo` (the failing send) on line 3, not line 1.
+    let e = eval_err_full("1.\n2.\nfoo", "<test>");
+    assert_eq!((e.span.line, e.span.column), (3, 1));
+}
+
+#[test]
+fn error_span_column_points_past_leading_whitespace() {
+    // "   1 / 0" -> `/` at column 6 (3 leading spaces + "1 " before it).
+    let e = eval_err_full("1.\n   1 / 0", "<test>");
+    assert_eq!((e.span.line, e.span.column), (2, 6));
 }

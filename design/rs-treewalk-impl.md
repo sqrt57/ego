@@ -704,6 +704,34 @@ Line and column are 1-based. For stack-like exception unwinding, the outermost
 `on:Do:` handler or the top-level runner prints the span; intermediate frames do
 not print.
 
+### Placeholder spans (primitives and bootstrap-synthesized methods)
+
+Two constructs have no real source text of their own, so they cannot carry a
+meaningful `SourceSpan`, and each stamps a placeholder instead:
+
+- `PrimFn` (`primitives.rs`) only threads `Arena`/`RootSet`, not a span, so
+  errors raised inside a primitive use `prim_span()`, a dummy `<primitive>:0:0`.
+- Bootstrap-synthesized methods (`+`, `/`, and the other operator-to-primitive
+  forwarders built by `make_unary_prim_method`/`make_binary_prim_method` in
+  `bootstrap.rs`, not parsed from `boot.ego` text) carry a dummy
+  `<bootstrap>:0:0` span on every AST node in their one-statement body.
+
+Both placeholders are rewritten to the real call-site span at the one point
+that has it:
+
+- `eval_send`'s primitive-dispatch branch unconditionally overwrites any
+  error's span with the span it was called with — a primitive's own span is
+  never meaningful, so this is safe unconditionally.
+- `eval_method` rewrites an error's span only when the erroring statement's
+  file is exactly `"<bootstrap>"`, substituting its own `span` parameter (the
+  real call site). A genuine user-defined method is left alone: its body has
+  real per-statement spans from parsed source, and an error inside it should
+  point inside the method, not at the call site — this only fires for the
+  synthetic forwarders.
+
+Without this, `1 / 0` would report `<bootstrap>:0:0: error: division by zero`
+instead of the user's actual file, line, and column.
+
 ---
 
 ## Testing
