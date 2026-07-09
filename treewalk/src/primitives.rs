@@ -72,6 +72,44 @@ fn format_float(f: f64) -> String {
     if s.contains('.') || s.contains('e') || s.contains('E') { s } else { format!("{s}.0") }
 }
 
+fn prim_string_print_string(
+    recv: ObjectId,
+    _args: &[ObjectId],
+    _arena: &mut Arena,
+    _roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    Ok(recv)
+}
+
+fn as_string<'a>(id: ObjectId, arena: &'a Arena, ctx: &str) -> Result<&'a str, EgoError> {
+    match &arena.get(id).kind {
+        ObjectKind::StringVal(s) => Ok(s),
+        _ => Err(EgoError::new(prim_span(), format!("{ctx} requires string receiver"))),
+    }
+}
+
+fn make_string(s: String, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+    let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into_boxed_str())));
+    arena.get_mut(id).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: roots.string_proto,
+    });
+    id
+}
+
+fn prim_string_concat(
+    recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    let a = as_string(recv, arena, "_StringConcat:")?.to_string();
+    let arg = one_arg(args, "_StringConcat:")?;
+    let b = as_string(arg, arena, "_StringConcat:")?;
+    Ok(make_string(format!("{a}{b}"), arena, roots))
+}
+
 // ── Numeric arithmetic and comparison ──────────────────────────────────────
 
 enum Num {
@@ -341,6 +379,8 @@ fn prim_gc_collect(
 pub fn register_all(prims: &mut PrimitiveTable) {
     prims.register("_IntPrintString", prim_int_print_string);
     prims.register("_FloatPrintString", prim_float_print_string);
+    prims.register("_StringPrintString", prim_string_print_string);
+    prims.register("_StringConcat:", prim_string_concat);
     prims.register("_PrintLine:", prim_print_line);
     prims.register("_GcCollect", prim_gc_collect);
 

@@ -79,6 +79,11 @@ fn golden_1_11_control_flow() {
     run_golden_dir("tests/eval_golden/1.11-control-flow");
 }
 
+#[test]
+fn golden_1_12_strings() {
+    run_golden_dir("tests/eval_golden/1.12-strings");
+}
+
 fn eval_err(source: &str) -> String {
     let mut interp = bootstrap().unwrap_or_else(|e| panic!("bootstrap failed: {e}"));
     match eval_source_print(source, "<test>", &mut interp) {
@@ -160,4 +165,10 @@ fn wrong_arg_count_to_block_is_fatal() {
 fn while_true_condition_must_be_boolean_is_fatal() {
     let msg = eval_err("[1] whileTrue: [1]");
     assert!(msg.contains("true or false"), "got: {msg}");
+}
+
+#[test]
+fn string_concat_with_non_string_argument_is_fatal() {
+    let msg = eval_err("'foo' , 3");
+    assert!(msg.contains("requires string"), "got: {msg}");
 }

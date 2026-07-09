@@ -164,8 +164,9 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
     let lobby_id = arena.alloc(lobby);
     roots.lobby = lobby_id;
 
-    // Wire numeric traits and boolean printString via inline Rust-hardcoded
-    // traits. (Moving this into boot.ego needs mirror-based reflection,
+    // Wire numeric, string, block, and boolean traits (plus nil's printString)
+    // via inline Rust-hardcoded traits. (Moving this into boot.ego needs
+    // mirror-based reflection,
     // substage 1.16, since boot.ego has no way to attach methods to an
     // already-allocated prototype object before then.)
     let int_trait = make_trait(
@@ -198,15 +199,28 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         value: float_trait,
     });
 
+    let string_trait = make_trait(
+        &[("printString", "_StringPrintString")],
+        &[(",", "_StringConcat:")],
+        &mut arena, &roots,
+    );
+    arena.get_mut(string_proto).slots.push(Slot {
+        name: "parent*".to_string(),
+        kind: SlotKind::Parent,
+        value: string_trait,
+    });
+
     let value_method = make_unary_prim_method("_BlockValue", &mut arena, &roots);
     let value_1_method = make_binary_prim_method("_BlockValue:", &mut arena, &roots);
     let value_2_method = make_two_arg_prim_method("_BlockValue:Value:", &mut arena, &roots);
     let while_true_method = make_binary_prim_method("_BlockWhileTrue:", &mut arena, &roots);
+    let block_print = make_const_string_method("a Block", &mut arena, &roots);
     let mut block_trait_obj = Object::new(ObjectKind::Plain);
     block_trait_obj.slots.push(Slot { name: "value".to_string(), kind: SlotKind::Method, value: value_method });
     block_trait_obj.slots.push(Slot { name: "value:".to_string(), kind: SlotKind::Method, value: value_1_method });
     block_trait_obj.slots.push(Slot { name: "value:With:".to_string(), kind: SlotKind::Method, value: value_2_method });
     block_trait_obj.slots.push(Slot { name: "whileTrue:".to_string(), kind: SlotKind::Method, value: while_true_method });
+    block_trait_obj.slots.push(Slot { name: "printString".to_string(), kind: SlotKind::Method, value: block_print });
     let block_trait = alloc_with_gc(&mut arena, &roots, block_trait_obj);
     arena.get_mut(block_proto).slots.push(Slot {
         name: "parent*".to_string(),
@@ -256,6 +270,13 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         name: "printString".to_string(),
         kind: SlotKind::Method,
         value: false_print,
+    });
+
+    let nil_print = make_const_string_method("nil", &mut arena, &roots);
+    arena.get_mut(nil_id).slots.push(Slot {
+        name: "printString".to_string(),
+        kind: SlotKind::Method,
+        value: nil_print,
     });
 
     let mut interp = Interpreter {

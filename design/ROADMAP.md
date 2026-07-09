@@ -148,7 +148,7 @@ Spec: [§ Blocks](lang-spec.md#3-blocks).
 
 Spec: [§ Control Flow via Messages](lang-spec.md#7-control-flow-via-messages).
 
-### Substage 1.12 — Evaluator: strings
+### Substage 1.12 — Evaluator: strings ✓
 
 String literals, `,` concatenation, `printString` on all built-in types.
 
