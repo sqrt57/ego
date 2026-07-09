@@ -131,3 +131,22 @@ currently nothing in the language that lets it. Revisit once the
 collections/IO substage wires up `stdout`/`stderr`/`stdin` per `stdlib.md`;
 at that point add a golden or CLI test that drives real script output
 through `_PrintLine:`.
+
+## `parent*` on built-in protos is unreachable by directed resend — now that mirrors can add a second one
+
+`self-notes.md` §11 (lines 521-530) notes that every built-in numeric/string
+prototype's parent slot is named literally `"parent*"` (asterisk included),
+which is not a producible `identifier` and so can't be targeted by directed
+resend or written as an ordinary send — deliberately fine as long as the
+built-in chain stays strictly linear (one parent per link), since undirected
+`resend` already reaches the whole chain unambiguously. That note explicitly
+flagged substage 1.17 (mirrors) as the point where this stops being purely
+hypothetical: `m addSlot:Value:`/`m at:Put:` (mirror API, `lang-spec.md` §11)
+can now attach or overwrite a second parent slot on `integer_proto` et al.
+from ordinary ego code, at which point a selector reachable through both
+parents becomes genuinely ambiguous with no way to directed-resend to either
+one by name. Substage 1.17 shipped (`0198668`) without addressing this —
+mirrors don't special-case `parent*`-named slots, so the gap is now live,
+not just theoretical. Revisit by giving built-in protos' parent slots a
+producible name (dropping the `*` convention, or reserving a distinct
+nameable alias) before relying on multi-parent built-ins anywhere.
