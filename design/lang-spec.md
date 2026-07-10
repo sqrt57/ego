@@ -510,13 +510,21 @@ Built-in exception types:
 | Type | Signalled when |
 |---|---|
 | `error` | Base type; all built-in exceptions inherit from it |
-| `messageNotUnderstood` | No method found for a message send |
+| `messageNotUnderstood` | No method found for a message send, or the same message found through more than one parent (ambiguous) |
 | `badBlockActivation` | A non-local `^` return targets an already-returned method activation |
 | `zeroDivide` | Division or modulo by zero |
 | `primitiveError` | A built-in operation fails for any other reason |
 
 User-defined exception types are created by cloning `error` (or any subtype)
 and adding a parent slot pointing to the desired supertype.
+
+`messageNotUnderstood` additionally carries a `candidates` slot — an Array,
+empty except for the ambiguous-lookup case, where it holds the two competing
+immediate-parent objects that each resolved the message. This is an
+ego-specific enrichment: the Self Handbook's formal semantics only specify
+that an "ambiguous message send" error occurs, with no defined payload
+shape. No other built-in exception type carries structured data beyond
+`messageText`.
 
 ---
 

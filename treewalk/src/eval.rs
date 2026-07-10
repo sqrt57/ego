@@ -11,6 +11,7 @@ use crate::gc::{alloc_with_gc, make_string};
 use crate::lexer::lex;
 use crate::object::{BlockData, MethodDef, Object, ObjectKind, Slot, SlotKind};
 use crate::parser::parse;
+use crate::primitives::make_array;
 
 pub enum EgoSignal {
     Err(EgoError),
@@ -69,8 +70,16 @@ enum SlotLookup {
     VarSetter(ObjectId, String),
 }
 
+/// Carries the selector and the competing immediate-parent objects that each
+/// resolved it, for the `candidates` slot on the resulting `messageNotUnderstood`
+/// exception — see `signal_ambiguous`.
+struct AmbiguousLookup {
+    sel: String,
+    candidates: Vec<ObjectId>,
+}
+
 /// Ordinary top-down lookup: `id`'s own slots first, then its parents.
-fn lookup_slot(recv: ObjectId, sel: &str, interp: &Interpreter) -> Result<Option<SlotLookup>, String> {
+fn lookup_slot(recv: ObjectId, sel: &str, interp: &Interpreter) -> Result<Option<SlotLookup>, AmbiguousLookup> {
     lookup_in(recv, sel, interp, &mut Vec::new())
 }
 
@@ -79,7 +88,7 @@ fn lookup_in(
     sel: &str,
     interp: &Interpreter,
     visited: &mut Vec<ObjectId>,
-) -> Result<Option<SlotLookup>, String> {
+) -> Result<Option<SlotLookup>, AmbiguousLookup> {
     // Cycle guard: bails out only for an object already on *this* downward
     // path (`visited` is pushed/popped, not accumulated across siblings) —
     // see `lookup_in_parents` for why siblings must be free to revisit the
@@ -125,24 +134,30 @@ fn lookup_in(
 
 /// Searches every parent in `parents` (depth-first, left to right) and
 /// signals ambiguity if more than one yields a result — see self-notes.md §4.
+/// The two (not all — matches the pre-existing short-circuit-on-2nd-match
+/// control flow) competing immediate parents are captured for the resulting
+/// exception's `candidates` slot.
 fn lookup_in_parents(
     parents: &[ObjectId],
     sel: &str,
     interp: &Interpreter,
     visited: &mut Vec<ObjectId>,
-) -> Result<Option<SlotLookup>, String> {
-    let mut found: Option<SlotLookup> = None;
+) -> Result<Option<SlotLookup>, AmbiguousLookup> {
+    let mut found: Option<(ObjectId, SlotLookup)> = None;
     for &parent_id in parents {
         if let Some(result) = lookup_in(parent_id, sel, interp, visited)? {
-            if found.is_some() {
-                return Err(format!(
-                    "message not understood: {sel} is ambiguous (reachable through multiple parents)"
-                ));
+            match found {
+                None => found = Some((parent_id, result)),
+                Some((first_parent, _)) => {
+                    return Err(AmbiguousLookup {
+                        sel: sel.to_string(),
+                        candidates: vec![first_parent, parent_id],
+                    });
+                }
             }
-            found = Some(result);
         }
     }
-    Ok(found)
+    Ok(found.map(|(_, result)| result))
 }
 
 pub fn eval_send(
@@ -333,7 +348,7 @@ fn eval_resend(
 /// method should see as `self` — the message receiver for `eval_send`, the
 /// *original* receiver (unchanged) for `eval_resend`.
 fn invoke_lookup(
-    lookup: Result<Option<SlotLookup>, String>,
+    lookup: Result<Option<SlotLookup>, AmbiguousLookup>,
     self_obj: ObjectId,
     sel: &str,
     args: &[ObjectId],
@@ -386,7 +401,7 @@ fn invoke_lookup(
         // The only `Err` a lookup ever produces is `lookup_in_parents`'s
         // ambiguity case — self-notes.md §4 mandates a message-not-understood
         // for it, not a primitiveError (previously misclassified here).
-        Err(msg) => signal_builtin(ErrorKind::MessageNotUnderstood, msg, span, interp),
+        Err(amb) => signal_ambiguous(amb, span, interp),
     }
 }
 
@@ -582,7 +597,7 @@ fn eval_exc_op(sel: &str, recv: ObjectId, args: &[ObjectId], span: &SourceSpan, 
     match sel {
         "_ExcSignal" => signal_exception(recv, span, interp),
         "_ExcSignal:" => {
-            set_message_text_obj(recv, args[0], interp);
+            set_data_slot(recv, "messageText", args[0], interp);
             signal_exception(recv, span, interp)
         }
         // `outer` continues the search from where `signal` left off: the
@@ -633,16 +648,16 @@ fn handler_resume(interp: &Interpreter, span: &SourceSpan, val: ObjectId) -> Eva
     Err(EgoSignal::Resume(val))
 }
 
-/// Upserts `exc_obj`'s own `messageText` slot to `text_id` — "own" because a
+/// Upserts `exc_obj`'s own `name` slot to `value` — "own" because a
 /// user-defined exception type (`(| parent* = error |)`) starts out with no
 /// slot of its own, only inheriting `error`'s; the first `signal:` gives it
-/// one, exactly as if every exception object always had a private
-/// `messageText` data slot from the start.
-fn set_message_text_obj(exc_obj: ObjectId, text_id: ObjectId, interp: &mut Interpreter) {
+/// one, exactly as if every exception object always had a private data slot
+/// (`messageText`, `candidates`, ...) from the start.
+fn set_data_slot(exc_obj: ObjectId, name: &str, value: ObjectId, interp: &mut Interpreter) {
     let obj = interp.arena.get_mut(exc_obj);
-    match obj.slots.iter_mut().find(|s| s.kind != SlotKind::Parent && s.name == "messageText") {
-        Some(slot) => slot.value = text_id,
-        None => obj.slots.push(Slot { name: "messageText".to_string(), kind: SlotKind::Data, value: text_id }),
+    match obj.slots.iter_mut().find(|s| s.kind != SlotKind::Parent && s.name == name) {
+        Some(slot) => slot.value = value,
+        None => obj.slots.push(Slot { name: name.to_string(), kind: SlotKind::Data, value }),
     }
 }
 
@@ -736,10 +751,39 @@ fn builtin_exc_proto(kind: ErrorKind, interp: &Interpreter) -> ObjectId {
 /// search as a user `signal:` send. Used at every runtime fault site that a
 /// well-formed program can trigger (as opposed to lexer/parser failures and
 /// internal-bug guards, which stay a plain uncatchable `EgoSignal::Err`).
+///
+/// `messageNotUnderstood`'s `candidates` slot (see `signal_ambiguous`) is
+/// reset to an empty array on every plain (non-ambiguous) signal through
+/// here — the exception object is the shared singleton proto, not a fresh
+/// instance per signal, so a stale array from an earlier ambiguous lookup
+/// must not leak into an unrelated later not-understood signal.
 fn signal_builtin(kind: ErrorKind, message: String, span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
     let exc_obj = builtin_exc_proto(kind, interp);
     let text_id = make_string(message, &mut interp.arena, &interp.roots);
-    set_message_text_obj(exc_obj, text_id, interp);
+    set_data_slot(exc_obj, "messageText", text_id, interp);
+    if kind == ErrorKind::MessageNotUnderstood {
+        let empty_id = make_array(Vec::new(), &mut interp.arena, &interp.roots);
+        set_data_slot(exc_obj, "candidates", empty_id, interp);
+    }
+    signal_exception(exc_obj, span, interp)
+}
+
+/// Signals `messageNotUnderstood` for `lookup_in_parents`'s ambiguity case
+/// (self-notes.md §4), attaching the competing parent objects as an ego
+/// `Array` in the exception's `candidates` slot — this is an ego-specific
+/// enrichment beyond what the Self Handbook's formal semantics specify (they
+/// only require signalling "ambiguous message send" with no defined payload
+/// shape); see `design/backlog.md`.
+fn signal_ambiguous(amb: AmbiguousLookup, span: &SourceSpan, interp: &mut Interpreter) -> EvalResult {
+    let exc_obj = interp.roots.message_not_understood_proto;
+    let message = format!(
+        "message not understood: {} is ambiguous (reachable through multiple parents)",
+        amb.sel
+    );
+    let text_id = make_string(message, &mut interp.arena, &interp.roots);
+    set_data_slot(exc_obj, "messageText", text_id, interp);
+    let candidates_id = make_array(amb.candidates, &mut interp.arena, &interp.roots);
+    set_data_slot(exc_obj, "candidates", candidates_id, interp);
     signal_exception(exc_obj, span, interp)
 }
 

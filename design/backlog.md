@@ -23,14 +23,57 @@ in `eval_golden.rs`) — added a new golden test,
 that actually catches it via `on: messageNotUnderstood Do:` to close that
 coverage gap. One-line fix in `eval.rs`, no other code touched.
 
-**Still open:** the report itself remains plain prose naming just the
-selector, with no enumeration of the competing parent objects/paths.
-`self-notes.md` §4 doesn't specify the report's shape beyond "an ambiguity
-report." Revisit if this needs more structure — no built-in exception
-currently carries any data beyond `messageText` (not `zeroDivide`'s
-divisor, not `messageNotUnderstood`'s receiver/selector), so adding
-structured parent-path data here would be the first of its kind and wants
-its own design decision, not a one-off.
+**Fully resolved (2026-07-10):** structured payload implemented. Checked
+what real Self actually specifies first (Self Handbook 2024.1, Chapter 3's
+formal lookup/message-send/resend rules) — it only says
+`|M| > 1: error: ambiguous message send`, no payload shape defined at all,
+same abstraction level as "message not understood." So there was no Self
+behavior being under-matched; this is a deliberate ego-specific enrichment,
+not a fidelity fix.
+
+`lookup_in_parents` (`eval.rs`) now returns a structured `AmbiguousLookup {
+sel, candidates: Vec<ObjectId> }` on ambiguity instead of a pre-formatted
+`String` — `candidates` holds the two competing immediate-parent objects
+(only two, not all: matches the pre-existing short-circuit-on-2nd-match
+control flow, unchanged). `invoke_lookup`'s `Err` arm calls a new
+`signal_ambiguous`, which builds the same `messageText` string as before
+*and* attaches `candidates` as a new Array-valued data slot on the
+`messageNotUnderstood` singleton exception object, via a generalized
+`set_data_slot` helper (`set_message_text_obj` was folded into it — same
+upsert logic, now reusable for any named data slot, not just
+`messageText`).
+
+Built-in exceptions are shared, mutated-in-place singletons (not
+per-signal instances) — `signal_builtin` already worked this way for every
+exception kind, not something this change introduced. Since `candidates`
+is new, it must not leak stale data from an earlier ambiguous signal into
+a later *plain* not-understood signal sharing the same singleton:
+`signal_builtin` now resets `candidates` to an empty Array on every
+`messageNotUnderstood` signal that isn't the ambiguous path.
+`bootstrap.rs` also seeds `message_not_understood_proto` with an empty
+`candidates` Array at startup, so it's reflectable even before any
+exception has ever fired.
+
+Golden tests: `1.9-parent-resend/ambiguous_lookup_candidates.ego` (asserts
+`candidates size = 2` and that both entries are genuinely the original
+ambiguous parent objects, via `reflect: ... slotNames` on each — not
+placeholders) and `non_ambiguous_lookup_has_empty_candidates.ego` (plain
+not-understood still answers `candidates size = 0`).
+
+**Unrelated bug found and fixed along the way**: writing the candidates
+golden test (chaining `n printString , '...'`, receiver-first) surfaced
+that `_IntPrintString`/`_FloatPrintString` (`primitives.rs`) built their
+result `StringVal` via raw `alloc_with_gc(... Object::new(...))` instead of
+the shared `make_string` helper — so `3 printString`'s result had **no
+`parent` slot at all**, and any further send to it (e.g. `,` concatenation
+with the number *first*) failed as message-not-understood. Pre-existing on
+`main` before this session, silently uncaught because every existing golden
+test only used a number's `printString` result as the *argument* to `,`
+(string first, e.g. `'x = ' , 3 printString`) — `_StringConcat:` reads the
+argument's raw Rust-level string content directly, never sends it a
+message, so that direction never exercised the missing parent slot. Fixed
+by routing both primitives through `make_string`. Regression test:
+`1.12-strings/number_print_string_result_has_string_parent.ego`.
 
 ## `Data`-kind block/method locals aren't protected from reassignment
 

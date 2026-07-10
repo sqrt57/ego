@@ -10,7 +10,7 @@ use crate::gc::{alloc_with_gc, make_string, RootSet};
 use crate::lexer::lex;
 use crate::object::{MethodDef, Object, ObjectKind, Slot, SlotKind};
 use crate::parser::parse;
-use crate::primitives::PrimitiveTable;
+use crate::primitives::{make_array, PrimitiveTable};
 
 pub struct Interpreter {
     pub arena: Arena,
@@ -416,6 +416,17 @@ pub fn bootstrap() -> Result<Interpreter, EgoError> {
         let text_id = make_string(default_text, &mut arena, &roots);
         arena.get_mut(proto).slots.push(Slot { name: "messageText".to_string(), kind: SlotKind::Data, value: text_id });
     }
+    // `messageNotUnderstood`'s `candidates` slot (the ambiguous parents that
+    // caused an ambiguity signal, empty otherwise — see `signal_ambiguous`/
+    // `signal_builtin` in eval.rs) is seeded empty here so it's already
+    // reflectable before any exception has ever fired, same as `messageText`
+    // above.
+    let empty_candidates = make_array(Vec::new(), &mut arena, &roots);
+    arena.get_mut(message_not_understood_proto).slots.push(Slot {
+        name: "candidates".to_string(),
+        kind: SlotKind::Data,
+        value: empty_candidates,
+    });
 
     // Wire `true`/`false` control-flow methods via a shared trait: the
     // method bodies are identical for both singletons (forward self and any

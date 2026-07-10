@@ -1,0 +1,9 @@
+[(| a* = (| greet = ( 1 ) |). b* = (| greet = ( 2 ) |) |) greet]
+    on: messageNotUnderstood
+    Do: [| :e |
+        (e candidates size) printString
+        , ' '
+        , ((reflect: (e candidates at: 1)) slotNames) printString
+        , ' '
+        , ((reflect: (e candidates at: 2)) slotNames) printString
+    ]

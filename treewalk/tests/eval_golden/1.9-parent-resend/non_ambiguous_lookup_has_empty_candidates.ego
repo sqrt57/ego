@@ -1,0 +1,1 @@
+[3 zork] on: messageNotUnderstood Do: [| :e | e candidates size printString]

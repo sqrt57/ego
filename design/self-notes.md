@@ -136,6 +136,16 @@ one path to methods).
 arena-based object model in Stage 1–2 will implement this directly; Stage 3
 (Zig VM) may add inline caches for the common one-parent case.
 
+**Ambiguity report, an ego-specific enrichment (2026-07-10):** the Self
+Handbook 2024.1's formal semantics (Chapter 3, message-send/lookup/resend
+rules) only specify `|M| > 1: error: ambiguous message send` — no payload
+shape beyond the fact that an error occurs. ego goes one step further: the
+resulting `messageNotUnderstood` exception carries a `candidates` slot (an
+Array of the two competing immediate-parent objects) so a handler can
+actually inspect what conflicted, not just read prose. Every other built-in
+exception is still `messageText`-only; this is the first exception type with
+any structured payload. See `lang-spec.md` §10 and `backlog.md`.
+
 ---
 
 ## 5. Blocks
