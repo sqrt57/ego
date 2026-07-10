@@ -76,42 +76,41 @@ before fixing: what should the literal's value be when a body is present,
 and does the body run with `self` bound to the new object or the enclosing
 one?
 
-## Bare `true`/`false`/`nil` (and other lobby bindings) are unreachable from inside most method bodies
+## ~~Bare `true`/`false`/`nil` (and other lobby bindings) are unreachable from inside most method bodies~~ — resolved by design, not a bug
 
-`ExprKind::Ident` (`eval.rs`) resolves a bare identifier not found in the
-current activation's env via `eval_send(activation.self_obj, name, ...)` —
-an implicit unary send to `self`. The comment there already flags the
-consequence: "At top-level `self_obj` is the lobby, so lobby slots are
-found here too" — meaning this only works by coincidence at the top level.
-Inside an ordinary method or block, `self` is the receiver, which has no
-parent slot pointing at the lobby (`eval_object_slots` never gives new
-objects an implicit parent), so a bare `true`/`false`/`nil`/`stdout`/etc.
-reference fails with "message not understood" unless the enclosing object
-happens to have its own same-named slot. `self-notes.md` §6 states the
-intended stance plainly — "all names resolve through [the lobby] or the
-receiver" — but only the receiver half is implemented.
+**Resolved.** This entry (written during substage 1.11) asked whether
+`Ident` should fall back to the lobby on a failed self-send, or whether
+every object literal should get an implicit parent slot reaching the
+lobby. Both questions were already answered — by commit `6f8c35b`
+("Wire built-in traits back to the lobby"), which landed *before* this
+entry's "not fixed" framing was last true, and is written up in
+`self-notes.md` §6 under "Ego stance — adopt, with the reachability
+question resolved": ego deliberately does **not** make the lobby a
+universal ancestor. Built-in traits (`int_trait`, `bool_trait`,
+`block_trait`, `array_trait`, `mirror_trait`, etc.) each get an explicit
+`parent* → lobby` slot, guaranteeing reachability for anything cloned from
+a stdlib prototype. A genuinely bespoke object literal with no parent
+clause of its own gets none of this for free — matching Self's real
+opt-out convention exactly, not a gap.
 
-Found while writing substage 1.11's `whileTrue:` golden tests: a condition
-block `[false]` written *inside* a method failed with "message not
-understood: false"; worked around by writing `[1 > 3]` instead (obtains the
-same boolean via a comparison primitive, sidestepping identifier lookup
-entirely) — matches the pattern every earlier substage's golden tests
-already followed (booleans always came from comparisons, never a bare
-`true`/`false` token, which is presumably why this was never hit before
-1.11). Slot initializers evaluated in an *enclosing* activation (per the
-1.9 finding on object-literal slot values) are fine whenever that enclosing
-activation eventually bottoms out at the top level; it's specifically
-method/block bodies where `self` is a non-lobby-descended object that break.
+Verified empirically (2026-07-10, no code changes needed):
+- Default opt-out still holds: `(| ok = ( true ) |) ok` →
+  `message not understood: true`, as expected for a bespoke object with no
+  path to the lobby.
+- **Opt-in #1 — capture into a data slot.** Slot initializers always
+  evaluate in lobby context (per the two-phase construction rule, `eval_object_slots`,
+  fixed for *all* nesting depths by `b5a0fc7`, a substage-1.15 follow-up
+  that postdates this entry's "bottoms out at the top level" caveat —
+  that caveat no longer applies): `(| capturedTrue = true. ok = ( capturedTrue ) |) ok`
+  → `true`. This is the sanctioned workaround already documented in
+  `self-notes.md` lines 87–89.
+- **Opt-in #2 — explicit parent clause.** `(| parent* = true. ok = ( false ) |) ok`
+  → `false`: pointing a bespoke object's `parent*` at anything already
+  lobby-reachable (here, the `true` singleton, itself parented to
+  `bool_trait → lobby`) grants the whole chain.
 
-Not fixed — needs a design decision, not just a bug fix: should `Ident`
-fall back to sending to the lobby when the self-send fails (cheap, but
-silently changes what "message not understood" means for a genuinely
-unbound name)? Should every object literal get an implicit parent slot
-reaching the lobby (closer to Self's real universal-ancestor chain, but a
-bigger change touching `eval_object_slots` and possibly GC root-marking)?
-This will only get more pressing as later substages add `nil`-testing,
-exception prototypes, and mirrors, all of which are lobby bindings that
-method bodies will need to reach routinely.
+No further action needed here. `Ident`'s self-send-only fallback in
+`eval.rs` is correct as written.
 
 ## `_PrintLine:` primitive exists but has no ego-level entry point
 
