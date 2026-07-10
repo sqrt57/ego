@@ -72,9 +72,24 @@ sequence of statements that runs when the object is activated as a method:
 (| :x | x * x)
 ```
 
-This form — arg slots plus a code section — is a standalone method object.
-The same result is more commonly written as a named method slot on a parent
-object: `square: x = (x * x)`.
+This form — arg slots plus a code section — is a standalone method object:
+its code only runs once activated by a message send (out of scope for the
+Stage 1 tree-walker today — see `design/backlog.md`). The same result is
+more commonly written as a named method slot on a parent object:
+`square: x = (x * x)`.
+
+A code section with **no** arg slots behaves differently: since there is no
+message send to later activate it, it runs immediately, right after the
+slot list is built, with `self` bound to the object just constructed (there
+is no message-send receiver to inherit `self` from). The literal's overall
+value is the code section's last statement, not the freshly-built object:
+
+```
+(| i <- 0 | i: i + 1. i: i + 1. i)  "=> 2, not the object holding `i`"
+```
+
+A code section is optional; a literal with only slots and no code section
+still evaluates to the constructed object itself, as before.
 
 An optional annotation `{} = 'text'.` may appear at the start of the slot
 list to attach metadata (e.g. a category name for IDE tooling).

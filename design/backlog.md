@@ -70,27 +70,50 @@ frame that falls back to `captures` for names it doesn't own — a real `Env`
 redesign (today a flat `HashMap`, no parent-chain concept), out of scope
 unless a real recursive-block use case demands it.
 
-## Object-literal body statements are parsed but never evaluated
+## Standalone method objects (arg-slot literals) are never activated
 
-`(| slots | body )` is real grammar — `parse_object_lit` (`parser.rs`) parses
-trailing statements after the slot section's closing `|` into
-`ObjectLit.body`, and `parser_tests.rs` has passing parser-level tests for
-it (`object_with_body`, `object_no_slots_with_body`). But `eval_object_lit`/
-`eval_object_slots` (`eval.rs`) only ever construct the new object's slots
-from `obj.slots` — `obj.body` is read nowhere on the eval side, so any
-statements written there are silently discarded; the object literal's value
-is always the bare new object, never a body statement's result. Found while
-writing substage 1.11 golden tests: `(| i <- 0 | someExpr. i)` looks like it
-should run `someExpr` then answer `i`, but actually just answers a fresh
-object with an `i` slot, full stop. Not fixed — no golden test currently
-depends on evaluating an object literal's body (existing tests always put
-"doit" logic in a method slot and send it after the closing paren, e.g.
-`(| run = ( ... ) |) run`), and it's unclear from `lang-spec.md` alone what
-the body's role is even meant to be (Self doesn't have this construct in
-quite this shape — self-notes.md doesn't cover it). Needs a spec decision
-before fixing: what should the literal's value be when a body is present,
-and does the body run with `self` bound to the new object or the enclosing
-one?
+`(| :x | x * x)` — an object literal with one or more `Arg` slots — is a
+*standalone method object* per `lang-spec.md` §1: real Self activates it
+(runs its code, with args bound from the message that reached it) whenever
+it's found by a message lookup, the same way an ordinary `Method` slot's
+body runs on lookup. ego's tree-walker doesn't implement this: `SlotKind::Arg`
+lookup (`eval.rs`) returns the arg slot's placeholder `nil_id` value like an
+ordinary data read, never activates anything, and arg-slot literals'
+`ObjectLit.body` is left untouched by `eval_object_lit` even after the
+no-arg-slot case was wired up (see the resolved entry below) — confirmed via
+`(reflect: (| :x | x * x)) slotNames` still answering `(x)`, not running the
+body. Noted as out of scope as far back as substage 1.9 ("Arg intentionally
+left as `None` … standalone-method-object feature"). Fixing this needs: (1)
+deciding how such an object gets *placed* somewhere activatable — as a data
+slot's value, per `rs-treewalk-impl.md`'s "`(| … |)` as a data slot value"
+note — and (2) teeing method lookup to check whether a found `Data`/`Var`
+slot's value is itself a method object and, if so, activate it with args
+from the message rather than returning it directly (mirrors how Self's
+uniform slot model works — method slots and data-slot-holding-a-method-object
+are the same underlying mechanism). Not attempted here; revisit as its own
+substage if a real program needs first-class reusable method values.
+
+## ~~Object-literal body statements are parsed but never evaluated~~ — fixed
+
+**Resolved (2026-07-10).** The Self Handbook 2024.1 (§3.1.4, §3.1.6) settled
+the spec question this entry raised: an object with a code section is a
+*method object*, and "evaluating" one runs its code and answers the code's
+result instead of the bare object. Adopted for the no-arg-slot case (the
+only case with no existing "activation via message send" mechanism to
+conflict with): `(| slots | body )` now runs `body` immediately after
+`eval_object_slots` finishes, as a zero-arg method activation with `self`
+bound to the newly-built object, and the literal's value becomes the body's
+result — `(| i <- 0 | i: i + 1. i: i + 1. i)` now answers `2`, not a fresh
+object. Literals *with* arg slots (real standalone method objects,
+`lang-spec.md` §1) are untouched — their body still doesn't run, since
+activating them needs args from a message send, which the tree-walker
+doesn't implement (`SlotKind::Arg` lookup is still a no-op, unchanged, see
+below). Implemented in `eval_object_lit` (`eval.rs`); docs updated in
+`lang-spec.md` §1 and `rs-treewalk-impl.md` ("Object-literal code
+sections"). 3 new golden tests in `tests/eval_golden/1.6-objects/`
+(body-runs-after-slots, self-is-the-new-object, arg-slot literal's body
+still not auto-run). Full suite green, no existing test depended on the old
+discard-the-body behavior.
 
 ## ~~Bare `true`/`false`/`nil` (and other lobby bindings) are unreachable from inside most method bodies~~ — resolved by design, not a bug
 

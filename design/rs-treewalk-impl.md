@@ -615,6 +615,27 @@ Given receiver `recv` and selector `sel`:
 `resend` skips step 1 and begins at step 2, using the parent chain of the object
 that defined the currently executing method (tracked in `Activation::resend_start`).
 
+### Object-literal code sections
+
+`ObjectLit.body` (the optional `Code` after a literal's slot list —
+`lang-grammar.md`'s `ObjectLiteral` production) is evaluated by
+`eval_object_lit` (`eval.rs`) right after `eval_object_slots` finishes
+building the object's slots, but only when the literal has **no arg slots**:
+
+- No arg slots + non-empty body: runs the body as a zero-arg method
+  activation (`eval_method`) with `self_obj` = `resend_start` = the
+  newly-built object — same shape as a method found directly on that object
+  via an ordinary lookup, just invoked immediately instead of via a message
+  send. The literal's value becomes the body's result, not the object.
+- No arg slots + empty body: unchanged from before — the literal's value is
+  the constructed object.
+- Any arg slots present: the literal is a standalone method object
+  (`lang-spec.md` §1); its body is left untouched here regardless of
+  whether it's empty. Activating it requires arg values from a message
+  send, which the tree-walker doesn't implement yet (`SlotKind::Arg` lookup
+  is a no-op — see `design/backlog.md`) — implementing that activation path
+  is a separate substage, not part of this fix.
+
 ### Var slots and auto-generated setters
 
 When the evaluator creates a `Var` slot named `x` on an object, it also installs

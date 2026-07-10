@@ -1068,7 +1068,27 @@ fn eval_object_lit(obj: &ObjectLit, interp: &mut Interpreter) -> EvalResult {
     interp.roots.stack_roots.push(new_id);
     let result = eval_object_slots(obj, new_id, interp);
     interp.roots.stack_roots.truncate(roots_base);
-    result
+    let new_id = result?;
+
+    // A literal with a code section and no arg slots is a zero-arg method
+    // object (Self Handbook 2024.1 §3.1.4/§3.1.6): evaluating it runs its
+    // code instead of answering the freshly-built object, with `self` bound
+    // to that object (there's no message-send receiver to inherit `self`
+    // from here — this is a bare literal, not a slot lookup). Literals with
+    // arg slots are "standalone method objects" (lang-spec.md §1) that only
+    // run when activated via message send — that activation path is out of
+    // scope (see backlog.md), so their body is left untouched here.
+    let has_arg_slot = obj.slots.iter().any(|d| matches!(d.kind, SlotDeclKind::Arg { .. }));
+    if obj.body.is_empty() || has_arg_slot {
+        return Ok(new_id);
+    }
+
+    let method_def = Rc::new(MethodDef {
+        params: Vec::new(),
+        body: obj.body.clone(),
+        source: obj.span.clone(),
+    });
+    eval_method(new_id, Some(new_id), method_def, &[], &obj.span, interp)
 }
 
 /// Data/var/parent slot initializers construct in the *lobby's* context, not
