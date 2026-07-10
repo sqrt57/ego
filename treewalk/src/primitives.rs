@@ -440,6 +440,30 @@ fn prim_print_line(
     }
 }
 
+/// Like `_PrintLine:` but writes no trailing newline. Explicitly flushes —
+/// unlike `println!`'s implicit per-newline flush, a bare `print!` can be
+/// left sitting in the buffer, and `main.rs` calls `std::process::exit` on
+/// several error paths, which skips destructors (and therefore skips the
+/// flush-on-drop a normal return would get).
+fn prim_print(
+    _recv: ObjectId,
+    args: &[ObjectId],
+    arena: &mut Arena,
+    roots: &mut RootSet,
+) -> Result<ObjectId, EgoError> {
+    if args.is_empty() {
+        return Err(EgoError::with_kind(prim_span(), "_Print: requires an argument".into(), ErrorKind::PrimitiveError));
+    }
+    match &arena.get(args[0]).kind {
+        ObjectKind::StringVal(s) => {
+            print!("{s}");
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+            Ok(roots.nil_id)
+        }
+        _ => Err(EgoError::with_kind(prim_span(), "_Print: requires a string argument".into(), ErrorKind::PrimitiveError)),
+    }
+}
+
 // ── Arrays ──────────────────────────────────────────────────────────────────
 
 fn array_elems<'a>(id: ObjectId, arena: &'a Arena, ctx: &str) -> Result<&'a [ObjectId], EgoError> {
@@ -694,6 +718,7 @@ pub fn register_all(prims: &mut PrimitiveTable) {
     prims.register("_StringPrintString", prim_string_print_string);
     prims.register("_StringConcat:", prim_string_concat);
     prims.register("_PrintLine:", prim_print_line);
+    prims.register("_Print:", prim_print);
     prims.register("_GcCollect", prim_gc_collect);
 
     prims.register("_ArrayNew:", prim_array_new);

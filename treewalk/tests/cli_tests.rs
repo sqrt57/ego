@@ -123,6 +123,20 @@ fn nonexistent_file_is_fatal() {
 }
 
 #[test]
+fn script_can_produce_explicit_output_via_stdout() {
+    // Closes design/backlog.md's "_PrintLine: has no ego-level entry point"
+    // gap: a script (auto-print suppressed) must still be able to print via
+    // `stdout show:`/`print:`/`println:`/`nl`.
+    let script = TempScript::new(
+        "stdout_output",
+        "stdout show: 'a'; print: 1; nl; println: 'done'.",
+    );
+    let out = run(&[script.path()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "a1\ndone\n");
+}
+
+#[test]
 fn version_flag() {
     let out = run(&["--version"]);
     assert!(out.status.success());

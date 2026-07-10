@@ -437,11 +437,16 @@ primitive name from a normal dispatch miss.
 | `_VarSet:` | 1 | Internal setter used by auto-generated `name:` methods |
 | `_GcCollect` | 0 | Force collection (test/debug only; never called from boot.ego) |
 | `_PrintLine:` | 1 | Write string to stdout followed by newline; returns `nil` |
+| `_Print:` | 1 | Write string to stdout, no trailing newline; explicitly flushes (a bare `print!` can otherwise sit unflushed when `main.rs` exits via `std::process::exit` on an error path); returns `nil` |
 | `_ErrorSignal:` | 1 | Signal a `primitiveError` with the given message string |
 
 This list grows with substages. `boot.ego` builds the ego-facing API on top —
 `+` on an integer delegates to `_IntAdd:`, `ifTrue:False:` on a boolean
-evaluates the appropriate block, and so on.
+evaluates the appropriate block, and so on. `stdout` (`print:`/`println:`/
+`show:`/`nl`) is the first `boot.ego` API attached to an already-running
+prototype via mirror-based reflection (`(reflect: self) addSlot:Value:` on
+the lobby) rather than a Rust-side `bootstrap.rs` lobby binding — see
+`design/stdlib.md`'s Console section.
 
 ---
 

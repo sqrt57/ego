@@ -112,24 +112,31 @@ Verified empirically (2026-07-10, no code changes needed):
 No further action needed here. `Ident`'s self-send-only fallback in
 `eval.rs` is correct as written.
 
-## `_PrintLine:` primitive exists but has no ego-level entry point
+## ~~`_PrintLine:` primitive exists but has no ego-level entry point~~ — fixed
 
-`primitives.rs` registers `_PrintLine:` (writes a string to stdout plus a
-newline) and `rs-treewalk-impl.md`'s primitive table documents it, but
-nothing in `boot.ego` calls it — there is no `stdout`/`printLine:`/`show:`
-wired up yet (`stdlib.md`'s `Console` section, § "The lobby binds `stdin`,
-`stdout`, and `stderr`," is still just a spec, not implemented). Concretely,
-an `.ego` *script* currently has no way to produce explicit output at all;
-the only visible output is the REPL's/`-e`'s automatic `printString` of a
-fragment's last expression, which script mode deliberately suppresses (see
-`cli.md`'s script-mode rule). Found while writing substage 1.13's CLI
-integration tests (`tests/cli_tests.rs`): those tests can only assert on
-exit codes, the auto-print/no-print rule, and `file:line:col:` diagnostics —
-they can't exercise a script actually printing something, since there's
-currently nothing in the language that lets it. Revisit once the
-collections/IO substage wires up `stdout`/`stderr`/`stdin` per `stdlib.md`;
-at that point add a golden or CLI test that drives real script output
-through `_PrintLine:`.
+**Resolved (2026-07-10).** `stdout` is now bound directly in `boot/boot.ego`
+via `(reflect: self) addSlot: 'stdout' Value: (| ... |)` on the lobby —
+mirror-based reflection (substage 1.17) made it possible to attach a new
+prototype to the lobby entirely from `boot.ego`, no `bootstrap.rs` wiring
+needed. Provides `print:`/`println:`/`show:`/`nl` per `stdlib.md`'s Console
+table (`printString` too, so it doesn't hit the `-e`/REPL auto-print gap
+every other trait already needed one for). `print:`/`println:` compute
+`obj printString` themselves before handing a plain string to the
+primitive, so they're written as real method bodies in `boot.ego` rather
+than via `bootstrap.rs`'s raw-argument-forwarding `make_binary_prim_method`
+helper. Added a new `_Print:` primitive (`primitives.rs`) alongside the
+existing `_PrintLine:` — writes without a trailing newline, and explicitly
+flushes stdout, since `main.rs` calls `std::process::exit` on several error
+paths, which skips the flush-on-drop a normal return would get and could
+otherwise strand a no-newline `print!` in the buffer.
+
+`stdin`/`stderr` are still unimplemented — this only closes the write side.
+
+Verified with a real subprocess-capturing CLI test (per this entry's own
+suggestion), not just a golden test: `script_can_produce_explicit_output_via_stdout`
+in `tests/cli_tests.rs` runs a script-mode `.ego` file through `stdout
+show:`/`print:`/`nl`/`println:` and asserts on the actual captured process
+stdout — the concrete thing this entry said golden tests couldn't do.
 
 ## ~~`parent*` on built-in protos unreachable by directed resend~~ — fixed
 

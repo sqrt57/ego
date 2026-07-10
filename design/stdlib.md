@@ -227,6 +227,12 @@ stdout println: seen size. "3"
 
 The lobby binds `stdin`, `stdout`, and `stderr` as singleton stream objects.
 
+**Implemented:** `stdout` (`print:`/`println:`/`show:`/`nl`, exactly the
+table below), added directly in `boot/boot.ego` via mirror-based reflection
+on the lobby, backed by two primitives (`_Print:`, `_PrintLine:`). `stderr`
+and `stdin` are still spec-only — no `_-`-selector or `boot.ego` binding
+exists for either yet.
+
 **`stdout` and `stderr` messages:**
 
 | Message | Returns | Notes |

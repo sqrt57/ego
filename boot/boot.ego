@@ -1,1 +1,14 @@
 "Standard library bootstrap — written in ego. Loaded at startup before user code."
+
+"Console output (design/stdlib.md's I/O > Console section). Attached to the
+lobby via mirror-based reflection rather than a Rust-side lobby binding,
+since a plain object literal with primitive-forwarding methods is all
+`stdout` needs — no new ObjectKind or bootstrap.rs wiring required.
+`stdin`/`stderr` are not implemented yet; only the write side exists."
+(reflect: self) addSlot: 'stdout' Value: (|
+    print: obj = ( self _Print: obj printString. self ).
+    println: obj = ( self _PrintLine: obj printString. self ).
+    show: s = ( self _Print: s. self ).
+    nl = ( self _PrintLine: ''. self ).
+    printString = ( 'stdout' )
+|).
