@@ -49,7 +49,7 @@ fn prim_int_print_string(
         ObjectKind::BigInt(n) => n.to_string().into_boxed_str(),
         _ => return Err(EgoError::with_kind(prim_span(), "_IntPrintString requires integer receiver".into(), ErrorKind::PrimitiveError)),
     };
-    Ok(alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s))))
+    Ok(make_string(s, arena, roots))
 }
 
 fn prim_float_print_string(
@@ -63,7 +63,7 @@ fn prim_float_print_string(
         _ => return Err(EgoError::with_kind(prim_span(), "_FloatPrintString requires float receiver".into(), ErrorKind::PrimitiveError)),
     };
     let s = format_float(f);
-    Ok(alloc_with_gc(arena, roots, Object::new(ObjectKind::StringVal(s.into_boxed_str()))))
+    Ok(make_string(s, arena, roots))
 }
 
 fn format_float(f: f64) -> String {
@@ -596,7 +596,7 @@ fn mirror_reflectee(id: ObjectId, arena: &Arena, ctx: &str) -> Result<ObjectId, 
     }
 }
 
-fn make_array(elems: Vec<ObjectId>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
+pub(crate) fn make_array(elems: Vec<ObjectId>, arena: &mut Arena, roots: &RootSet) -> ObjectId {
     let id = alloc_with_gc(arena, roots, Object::new(ObjectKind::Array(elems)));
     arena.get_mut(id).slots.push(Slot {
         name: "parent".to_string(),
