@@ -1,0 +1,3 @@
+[(| a* = (| greet = ( 1 ) |). b* = (| greet = ( 2 ) |) |) greet]
+    on: messageNotUnderstood
+    Do: [| :e | 'caught: ' , e messageText]

@@ -383,7 +383,10 @@ fn invoke_lookup(
             span,
             interp,
         ),
-        Err(msg) => signal_builtin(ErrorKind::PrimitiveError, msg, span, interp),
+        // The only `Err` a lookup ever produces is `lookup_in_parents`'s
+        // ambiguity case — self-notes.md §4 mandates a message-not-understood
+        // for it, not a primitiveError (previously misclassified here).
+        Err(msg) => signal_builtin(ErrorKind::MessageNotUnderstood, msg, span, interp),
     }
 }
 

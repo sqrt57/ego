@@ -6,15 +6,31 @@ relevant design doc when the roadmap reaches the area again.
 
 ## Ambiguity-report format for message-not-understood
 
-`self-notes.md` §4 (lookup algorithm) says an ambiguous lookup (a selector
-reachable through more than one parent) should "signal a
-message-not-understood with an ambiguity report," without specifying what
-the report should contain. Substage 1.9's implementation
-(`lookup_in_parents` in `eval.rs`) signals ambiguity with a plain one-line
-message naming the selector, with no enumeration of the competing parent
-paths. Revisit once exception handling (substage 1.15) defines a real
-error-object shape — an ambiguity report likely wants to carry the list of
-parents/paths that matched, not just prose.
+**Partially resolved (2026-07-10):** a real, live classification bug was
+found and fixed here, separate from the "report format" question below.
+`invoke_lookup` (`eval.rs`) was routing `lookup_in_parents`'s ambiguity
+error through `ErrorKind::PrimitiveError`, not `ErrorKind::MessageNotUnderstood`
+— so `on: primitiveError Do:` caught an ambiguous lookup but
+`on: messageNotUnderstood Do:` did not, directly contradicting
+`self-notes.md` §4's explicit rule ("signal a **message-not-understood**
+with an ambiguity report"). Verified with a real `on:Do:` probe before
+fixing (caught under `primitiveError`, uncaught/fatal under
+`messageNotUnderstood`) and after (now caught under `messageNotUnderstood`,
+as it should be). No test had ever asserted the exception *kind*, only that
+the message text contained "ambiguous" (`ambiguous_parent_lookup_is_fatal`
+in `eval_golden.rs`) — added a new golden test,
+`1.9-parent-resend/ambiguous_lookup_is_catchable_as_message_not_understood.ego`,
+that actually catches it via `on: messageNotUnderstood Do:` to close that
+coverage gap. One-line fix in `eval.rs`, no other code touched.
+
+**Still open:** the report itself remains plain prose naming just the
+selector, with no enumeration of the competing parent objects/paths.
+`self-notes.md` §4 doesn't specify the report's shape beyond "an ambiguity
+report." Revisit if this needs more structure — no built-in exception
+currently carries any data beyond `messageText` (not `zeroDivide`'s
+divisor, not `messageNotUnderstood`'s receiver/selector), so adding
+structured parent-path data here would be the first of its kind and wants
+its own design decision, not a one-off.
 
 ## `Data`-kind block/method locals aren't protected from reassignment
 
